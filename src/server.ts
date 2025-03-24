@@ -2,7 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import apiRoutes from './api/routes';
-import { ENV_CONFIG } from './config';
+import { ENV_CONFIG, TON_WALLET_CONFIG, TON_API_CONFIG, FRAGMENT_CONFIG, TRANSACTION_MONITOR_CONFIG } from './config';
+import { TonWalletService } from './wallet/TonWalletService';
+import { FragmentStarsPurchaseService } from './services/fragmentStarsPurchaseService';
+import { TonApiClient } from './apiClient/tonApi';
+import { TonTransactionMonitor } from './services/tonTransactionMonitor';
+import { FragmentApiClient } from './apiClient/fragmentApiClient';
+import { initializeDatabase, ensureDatabaseReady, AppDataSource } from './database';
+import { TransactionRepository } from './database/repositories/transaction.repository';
 
 /**
  * Настройка и запуск Express сервера
@@ -27,14 +34,24 @@ if (ENV_CONFIG.IS_DEVELOPMENT && ENV_CONFIG.VERBOSE_HTTP_LOGGING) {
 // Маршруты API
 app.use('/api', apiRoutes);
 
+// Глобальные переменные для служб
+let tonWalletService: TonWalletService;
+let tonApiClient: TonApiClient;
+let fragmentApiClient: FragmentApiClient;
+let starsPurchaseService: FragmentStarsPurchaseService;
+let transactionMonitor: TonTransactionMonitor;
+let transactionRepository: TransactionRepository;
+let isMonitoringRunning = false; // Флаг для отслеживания состояния мониторинга
+
 // Обработка корневого маршрута
 app.get('/', (req, res) => {
   res.json({
     message: 'Fragment Proxy API работает',
     version: '1.0.0',
-    endpoints: {
-      buyStars: '/api/buy-stars'
-    }
+    info: 'Сервис мониторинга транзакций TON для автоматической покупки звезд',
+    transactionMonitor: transactionMonitor ? 
+      { status: isMonitoringRunning ? 'running' : 'stopped' } : 
+      { status: 'not initialized' }
   });
 });
 
@@ -46,14 +63,118 @@ app.use((req, res) => {
   });
 });
 
-// Запуск сервера
-app.listen(PORT, () => {
-  console.log(`
+/**
+ * Асинхронная функция для инициализации и запуска всех сервисов
+ */
+async function startServer() {
+  try {
+    console.log('[API] Запуск сервера и инициализация сервисов...');
+    
+    // Инициализация базы данных
+    console.log('[API] Подготовка базы данных...');
+    await ensureDatabaseReady();
+    
+    // Создаем репозиторий транзакций
+    transactionRepository = new TransactionRepository(AppDataSource);
+    
+    // Инициализация сервиса TON кошелька
+    tonWalletService = new TonWalletService();
+    
+    // Инициализируем кошелек с настройками
+    await tonWalletService.initializeWallet({
+      mnemonic: TON_WALLET_CONFIG.MNEMONIC,
+      subwalletId: TON_WALLET_CONFIG.SUBWALLET_ID,
+      useTestnet: TON_WALLET_CONFIG.USE_TESTNET,
+      apiUrl: TON_WALLET_CONFIG.USE_TESTNET ? TON_WALLET_CONFIG.API_URL.TESTNET : TON_WALLET_CONFIG.API_URL.MAINNET,
+      apiKey: TON_WALLET_CONFIG.API_KEY
+    });
+    
+    // Сохраняем сервис кошелька в app для доступа из маршрутов
+    app.set('tonWalletService', tonWalletService);
+    
+    // Получаем адрес кошелька
+    const walletAddress = await tonWalletService.getWalletAddress();
+    console.log(`🔑 Адрес кошелька: ${walletAddress}`);
+    
+    // Получаем баланс кошелька
+    const balance = await tonWalletService.getBalance();
+    console.log(`💰 Баланс кошелька: ${Number(balance) / 1_000_000_000} TON`);
+    
+    // Инициализация TON API клиента
+    tonApiClient = new TonApiClient({
+      apiUrl: TON_WALLET_CONFIG.USE_TESTNET ? TON_API_CONFIG.TESTNET_API_URL : TON_API_CONFIG.API_URL,
+      apiKey: TON_API_CONFIG.API_KEY,
+      timeout: TON_API_CONFIG.TIMEOUT
+    });
+    
+    // Инициализация Fragment API клиента
+    fragmentApiClient = new FragmentApiClient(
+      FRAGMENT_CONFIG.COOKIES,
+      FRAGMENT_CONFIG.BASE_URL
+    );
+    
+    // Инициализация сервиса покупки звезд
+    const account = await tonWalletService.getWalletAccount();
+    starsPurchaseService = new FragmentStarsPurchaseService(
+      FRAGMENT_CONFIG.COOKIES,
+      account.address,
+      account.publicKey,
+      account.walletStateInit,
+      FRAGMENT_CONFIG.BASE_URL
+    );
+    
+    // Инициализация монитора транзакций с репозиторием
+    transactionMonitor = new TonTransactionMonitor(
+      tonWalletService,
+      starsPurchaseService,
+      tonApiClient,
+      transactionRepository
+    );
+    
+    // Запуск монитора, если настроен автоматический старт
+    if (TRANSACTION_MONITOR_CONFIG.AUTO_START) {
+      transactionMonitor.start();
+      isMonitoringRunning = true;
+      console.log('🔄 Мониторинг транзакций запущен автоматически');
+    }
+    
+    // Запуск сервера
+    app.listen(PORT, () => {
+      console.log(`
   🚀 Fragment Proxy API сервер запущен!
   🌍 Сервер доступен по адресу: http://localhost:${PORT}
   📝 Режим: ${ENV_CONFIG.IS_DEVELOPMENT ? 'Development' : 'Production'}
   📚 Подробное логирование HTTP: ${ENV_CONFIG.VERBOSE_HTTP_LOGGING ? 'Включено' : 'Отключено'}
-  `);
+  🔄 Мониторинг транзакций: ${isMonitoringRunning ? 'Включен' : 'Отключен'}
+  💱 Курс обмена: 1 TON = ${TRANSACTION_MONITOR_CONFIG.STARS_PER_TON} звезд
+  💵 Минимальная сумма: ${TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT} TON
+  💾 База данных: SQLite (${process.env.DB_PATH || 'data/database.sqlite'})
+      `);
+    });
+    
+  } catch (error) {
+    console.error('❌ Ошибка при запуске сервера:', error);
+    process.exit(1);
+  }
+}
+
+// Обработка сигналов завершения для корректного закрытия базы данных
+process.on('SIGINT', async () => {
+  try {
+    console.log('\n[API] Получен сигнал завершения, закрываем соединения...');
+    if (transactionMonitor) {
+      transactionMonitor.stop();
+    }
+    await AppDataSource.destroy();
+    console.log('[API] Все соединения закрыты, завершаем работу');
+    process.exit(0);
+  } catch (error) {
+    console.error('[API] Ошибка при завершении работы:', error);
+    process.exit(1);
+  }
 });
+
+// Запуск сервера и инициализация всех сервисов
+startServer();
 
 export default app; 

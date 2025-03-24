@@ -4,7 +4,6 @@
   "main": "dist/index.js",
   "license": "MIT",
   "scripts": {
-    "start": "yarn build && node dist/Program.js",
     "build": "tsc",
     "clean": "rm -rf dist",
     "prebuild": "yarn clean",
@@ -25,8 +24,11 @@
     "@types/node": "^20.11.24",
     "axios": "^1.6.7",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "helmet": "^8.1.0",
+    "reflect-metadata": "^0.2.2",
+    "sqlite3": "^5.1.7",
     "ton": "^13.9.0",
     "ton-crypto": "^3.2.0",
     "tonweb": "^0.0.66",
@@ -34,6 +36,7 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "tweetnacl": "^1.0.3",
+    "typeorm": "^0.3.21",
     "typescript": "^5.8.2"
   }
 }
