@@ -1,0 +1,36 @@
+{
+  "name": "fragment-proxy-typescript",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "yarn build && node dist/Program.js",
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prebuild": "yarn clean",
+    "watch": "tsc -w"
+  },
+  "dependencies": {
+    "@ton/core": "^0.60.1",
+    "@ton/crypto": "^3.3.0",
+    "@ton/ton": "^15.2.1",
+    "@tonclient/core": "^1.30.0",
+    "@tonclient/lib-node": "^1.30.0",
+    "@tonconnect/sdk": "^3.0.7",
+    "@tonconnect/ui": "^2.0.12",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^20.11.24",
+    "axios": "^1.6.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "ton": "^13.9.0",
+    "ton-crypto": "^3.2.0",
+    "tonweb": "^0.0.66",
+    "tonweb-mnemonic": "^1.0.1",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "tweetnacl": "^1.0.3",
+    "typescript": "^5.8.2"
+  }
+}

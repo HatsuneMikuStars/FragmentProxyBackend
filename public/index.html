@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fragment Stars Proxy</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tonconnect/sdk@latest/dist/tonconnect-sdk.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #0088cc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        #walletInfo {
+            margin-top: 20px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Fragment Stars Proxy</h1>
+        <div id="connectionButtons">
+            <button id="connectButton">Connect Wallet</button>
+            <button id="disconnectButton" disabled>Disconnect</button>
+        </div>
+        <div id="status" class="status disconnected">
+            Status: Disconnected
+        </div>
+        <div id="walletInfo"></div>
+    </div>
+
+    <script>
+        const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const statusDiv = document.getElementById('status');
+        const walletInfoDiv = document.getElementById('walletInfo');
+
+        // Функция для обновления UI в зависимости от статуса подключения
+        function updateUI(connected, account = null) {
+            connectButton.disabled = connected;
+            disconnectButton.disabled = !connected;
+            
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = 'Status: Connected';
+                if (account) {
+                    walletInfoDiv.innerHTML = `
+                        <h3>Wallet Info:</h3>
+                        <p>Address: ${account.address}</p>
+                        <p>Chain: ${account.chain}</p>
+                    `;
+                }
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = 'Status: Disconnected';
+                walletInfoDiv.innerHTML = '';
+            }
+        }
+
+        // Проверяем текущий статус при загрузке страницы
+        fetch('/api/status')
+            .then(response => response.json())
+            .then(data => {
+                updateUI(data.connected, data.account);
+            })
+            .catch(console.error);
+
+        // Обработчик для кнопки подключения
+        connectButton.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/connect', { method: 'POST' });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateUI(true, data.account);
+                } else {
+                    console.error('Connection error:', data.error);
+                    alert('Failed to connect: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Connection error:', error);
+                alert('Failed to connect: ' + error.message);
+            }
+        });
+
+        // Обработчик для кнопки отключения
+        disconnectButton.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/disconnect', { method: 'POST' });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateUI(false);
+                } else {
+                    console.error('Disconnection error:', data.error);
+                    alert('Failed to disconnect: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Disconnection error:', error);
+                alert('Failed to disconnect: ' + error.message);
+            }
+        });
+    </script>
+</body>
+</html> 
