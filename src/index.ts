@@ -1,14 +1,19 @@
-// Fragment TypeScript API - Главная точка входа в библиотеку
+/**
+ * Основной файл для экспорта компонентов API
+ */
 
-// Экспорт API клиента
-export { 
-  FragmentApiClient 
-} from './api/fragmentApiClient';
+import app from './server';
 
-// Экспорт сервиса покупки звезд
-export { 
-  FragmentStarsPurchaseService 
-} from './services/fragmentStarsPurchaseService';
+// Экспортируем сервер
+export { app };
+
+// Экспортируем функциональность покупки звезд для использования в других модулях
+export { FragmentStarsPurchaseService } from './services/fragmentStarsPurchaseService';
+export { FragmentApiClient } from './apiClient/fragmentApiClient';
+export { TonWalletService } from './wallet/TonWalletService';
+
+// Экспортируем настройки
+export * from './config';
 
 // Экспорт моделей API
 export {
@@ -24,7 +29,7 @@ export {
   WalletAccount,
   DeviceInfo,
   FragmentApiException
-} from './api/models/apiModels';
+} from './apiClient/models/apiModels';
 
 // Экспорт моделей сервиса покупки звезд
 export {

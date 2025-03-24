@@ -1,12 +1,12 @@
 // Fragment Stars Purchase Service
 // Сервис для покупки звезд на платформе Fragment
 
-import { FragmentApiClient } from '../api/fragmentApiClient';
+import { FragmentApiClient } from '../apiClient/fragmentApiClient';
 import { 
   Recipient,
   FragmentApiException,
   WalletAccount
-} from '../api/models/apiModels';
+} from '../apiClient/models/apiModels';
 import {
   PurchaseResult,
   InsufficientBalanceException,

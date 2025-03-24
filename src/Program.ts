@@ -1,5 +1,5 @@
 import { FragmentStarsPurchaseService } from './services/fragmentStarsPurchaseService';
-import { FragmentApiClient } from './api/fragmentApiClient';
+import { FragmentApiClient } from './apiClient/fragmentApiClient';
 import { TonWalletService } from './wallet/TonWalletService';
 import { loadWalletConfig } from './wallet/config';
 import { FRAGMENT_CONFIG, APP_CONFIG } from './config';

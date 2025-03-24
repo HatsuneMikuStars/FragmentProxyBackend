@@ -1,5 +1,5 @@
 import { SendTransactionParams, TransactionResult, TransactionStatus, WalletConfig } from './models/walletModels';
-import { WalletAccount } from '../api/models/apiModels';
+import { WalletAccount } from '../apiClient/models/apiModels';
 
 /**
  * Интерфейс сервиса для работы с TON кошельком

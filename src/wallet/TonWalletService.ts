@@ -2,7 +2,7 @@ import { TonClient, WalletContractV4, beginCell, toNano, internal, Address, Send
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { IWalletService } from './IWalletService';
 import { SendTransactionParams, TransactionResult, TransactionStatus, WalletConfig } from './models/walletModels';
-import { WalletAccount } from '../api/models/apiModels';
+import { WalletAccount } from '../apiClient/models/apiModels';
 
 /**
  * Сервис для работы с TON кошельком (совместимый с V5 кошельками)
