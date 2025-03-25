@@ -19,7 +19,7 @@ export class TonTransactionMonitor {
   private interval: NodeJS.Timeout | null = null;
   
   /**
-   * Конструктор
+   * Constructor
    */
   constructor(
     walletService: TonWalletService,
@@ -30,25 +30,25 @@ export class TonTransactionMonitor {
     this.starsPurchaseService = starsPurchaseService;
     this.transactionRepository = transactionRepository;
     
-    console.log('[TonTransactionMonitor] Инициализирован');
+    console.log('[Monitor] Transaction monitor initialized');
   }
   
   /**
-   * Запуск мониторинга транзакций
+   * Start transaction monitoring
    */
   public start(): void {
     if (this.isRunning) {
-      console.log('[TonTransactionMonitor] Мониторинг уже запущен');
+      console.log('[Monitor] Monitoring already running');
       return;
     }
     
     this.isRunning = true;
-    console.log('[TonTransactionMonitor] Мониторинг запущен');
+    console.log('[Monitor] Monitoring started');
     
-    // Запускаем начальную проверку немедленно
+    // Start initial check immediately
     this.checkNewTransactions();
     
-    // Запускаем периодическую проверку
+    // Start periodic check
     this.interval = setInterval(
       () => this.checkNewTransactions(), 
       TRANSACTION_MONITOR_CONFIG.CHECK_INTERVAL_MS
@@ -56,11 +56,11 @@ export class TonTransactionMonitor {
   }
   
   /**
-   * Остановка мониторинга
+   * Stop monitoring
    */
   public stop(): void {
     if (!this.isRunning) {
-      console.log('[TonTransactionMonitor] Мониторинг уже остановлен');
+      console.log('[Monitor] Monitoring already stopped');
       return;
     }
     
@@ -70,7 +70,7 @@ export class TonTransactionMonitor {
     }
     
     this.isRunning = false;
-    console.log('[TonTransactionMonitor] Мониторинг остановлен');
+    console.log('[Monitor] Monitoring stopped');
   }
   
   /**
@@ -85,7 +85,7 @@ export class TonTransactionMonitor {
       });
       
       if (newTransactions.length > 0) {
-        console.log(`[TonTransactionMonitor] Найдено ${newTransactions.length} транзакций`);
+        console.log(`[Monitor] Found ${newTransactions.length} transactions`);
       }
       
       // Обрабатываем каждую новую транзакцию
@@ -96,7 +96,7 @@ export class TonTransactionMonitor {
       // Обновляем время последней проверки
       this.lastCheckTimestamp = Date.now();
     } catch (error) {
-      console.error(`[TonTransactionMonitor] Ошибка при проверке транзакций`);
+      console.error(`[Monitor] Error checking transactions`);
     }
   }
   
@@ -106,7 +106,7 @@ export class TonTransactionMonitor {
    */
   public async checkTransactionByHash(txHash: string): Promise<boolean> {
     try {
-      console.log(`[TonTransactionMonitor] Проверка транзакции по хешу: ${txHash}`);
+      console.log(`[Monitor] Checking transaction by hash: ${txHash}`);
       
       // Проверяем, не обрабатывали ли мы уже эту транзакцию
       const exists = await this.transactionRepository.exists(txHash);
@@ -117,7 +117,7 @@ export class TonTransactionMonitor {
       // Получаем транзакцию по хешу
       const tx = await this.walletService.getTransactionByHash(txHash);
       if (!tx) {
-        console.log(`[TonTransactionMonitor] Транзакция с хешем ${txHash} не найдена`);
+        console.log(`[Monitor] Transaction with hash ${txHash} not found`);
         return false;
       }
       
@@ -125,7 +125,7 @@ export class TonTransactionMonitor {
       await this.processTransaction(tx);
       return true;
     } catch (error) {
-      console.error(`[TonTransactionMonitor] Ошибка при проверке транзакции ${txHash}`);
+      console.error(`[Monitor] Error checking transaction ${txHash}`);
       return false;
     }
   }
@@ -167,12 +167,12 @@ export class TonTransactionMonitor {
         return;
       }
       
-      console.log(`[TonTransactionMonitor] Извлечен никнейм: @${username}`);
+      console.log(`[Monitor] Extracted username: @${username}`);
       
       // Если сумма меньше минимальной, игнорируем
       const amount = Number(tx.amount) / 1_000_000_000;
       if (amount < TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT) {
-        console.log(`[TonTransactionMonitor] Сумма ${amount} TON меньше минимальной ${TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT} TON, игнорируем`);
+        console.log(`[Monitor] Amount ${amount} TON is less than minimum ${TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT} TON, ignoring`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
           amount: amount,
@@ -187,7 +187,7 @@ export class TonTransactionMonitor {
       const starsAmount = Math.floor(amount * TRANSACTION_MONITOR_CONFIG.STARS_PER_TON);
       
       if (starsAmount <= 0) {
-        console.log(`[TonTransactionMonitor] Рассчитанное количество звезд ${starsAmount} <= 0, игнорируем`);
+        console.log(`[Monitor] Calculated stars amount ${starsAmount} <= 0, ignoring`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
           amount: amount,
@@ -198,7 +198,7 @@ export class TonTransactionMonitor {
         return;
       }
       
-      console.log(`[TonTransactionMonitor] Отправка ${starsAmount} звезд пользователю @${username} (получено ${amount} TON)`);
+      console.log(`[Monitor] Sending ${starsAmount} stars to user @${username} (received ${amount} TON)`);
       
       // Сохраняем транзакцию в базу данных
       await this.transactionRepository.saveTransaction({
@@ -220,15 +220,15 @@ export class TonTransactionMonitor {
             result.transactionHash || "",
             true
           );
-          console.log(`[TonTransactionMonitor] Успешно отправлено ${starsAmount} звезд пользователю @${username}, хеш транзакции: ${result.transactionHash}`);
+          console.log(`[Monitor] Successfully sent ${starsAmount} stars to user @${username}, transaction hash: ${result.transactionHash}`);
         } else {
           await this.transactionRepository.updateTransactionAfterStarsPurchase(
             tx.id,
             result.transactionHash || "",
             false,
-            result.error || "Неизвестная ошибка"
+            result.error || "Unknown error"
           );
-          console.error(`[TonTransactionMonitor] Ошибка при отправке звезд: ${result.error}`);
+          console.error(`[Monitor] Error sending stars: ${result.error}`);
         }
       } catch (error) {
         const errorMessage = (error as Error).message;
@@ -238,10 +238,10 @@ export class TonTransactionMonitor {
           false,
           errorMessage
         );
-        console.error(`[TonTransactionMonitor] Исключение при отправке звезд`);
+        console.error(`[Monitor] Exception sending stars`);
       }
     } catch (error) {
-      console.error(`[TonTransactionMonitor] Ошибка при обработке транзакции ${tx.id}`);
+      console.error(`[Monitor] Error processing transaction ${tx.id}`);
     }
   }
   
