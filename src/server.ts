@@ -5,23 +5,26 @@ import apiRoutes from './api/routes';
 import { ENV_CONFIG, TON_WALLET_CONFIG, TON_API_CONFIG, FRAGMENT_CONFIG, TRANSACTION_MONITOR_CONFIG } from './config';
 import { TonWalletService } from './wallet/TonWalletService';
 import { FragmentStarsPurchaseService } from './services/fragmentStarsPurchaseService';
-import { TonApiClient } from './apiClient/tonApi';
 import { TonTransactionMonitor } from './services/tonTransactionMonitor';
 import { FragmentApiClient } from './apiClient/fragmentApiClient';
 import { initializeDatabase, ensureDatabaseReady, AppDataSource } from './database';
 import { TransactionRepository } from './database/repositories/transaction.repository';
+import path from 'path';
 
 /**
  * Настройка и запуск Express сервера
  */
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(helmet()); // Безопасность заголовков
 app.use(cors()); // Разрешаем CORS
 app.use(express.json()); // Парсинг JSON
 app.use(express.urlencoded({ extended: true })); // Парсинг URL-encoded
+
+// Обслуживание статических файлов из папки public
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Логгирование запросов в режиме разработки
 if (ENV_CONFIG.IS_DEVELOPMENT && ENV_CONFIG.VERBOSE_HTTP_LOGGING) {
@@ -36,7 +39,6 @@ app.use('/api', apiRoutes);
 
 // Глобальные переменные для служб
 let tonWalletService: TonWalletService;
-let tonApiClient: TonApiClient;
 let fragmentApiClient: FragmentApiClient;
 let starsPurchaseService: FragmentStarsPurchaseService;
 let transactionMonitor: TonTransactionMonitor;
@@ -100,13 +102,6 @@ async function startServer() {
     const balance = await tonWalletService.getBalance();
     console.log(`💰 Баланс кошелька: ${Number(balance) / 1_000_000_000} TON`);
     
-    // Инициализация TON API клиента
-    tonApiClient = new TonApiClient({
-      apiUrl: TON_WALLET_CONFIG.USE_TESTNET ? TON_API_CONFIG.TESTNET_API_URL : TON_API_CONFIG.API_URL,
-      apiKey: TON_API_CONFIG.API_KEY,
-      timeout: TON_API_CONFIG.TIMEOUT
-    });
-    
     // Инициализация Fragment API клиента
     fragmentApiClient = new FragmentApiClient(
       FRAGMENT_CONFIG.COOKIES,
@@ -127,7 +122,6 @@ async function startServer() {
     transactionMonitor = new TonTransactionMonitor(
       tonWalletService,
       starsPurchaseService,
-      tonApiClient,
       transactionRepository
     );
     

@@ -1,6 +1,16 @@
 import { Repository, DataSource } from 'typeorm';
 import { Transaction } from '../entities/transaction.entity';
-import { TonTransaction } from '../../apiClient/tonApi';
+
+/**
+ * Локальный интерфейс для транзакций TON, заменяет TonTransaction из apiClient
+ */
+interface TonTransactionData {
+  hash: string;
+  amount: number;
+  timestamp: number;
+  comment?: string;
+  senderAddress?: string;
+}
 
 /**
  * Репозиторий для работы с транзакциями
@@ -29,7 +39,7 @@ export class TransactionRepository {
   /**
    * Добавление новой транзакции в базу данных
    */
-  async saveTransaction(transaction: TonTransaction, username?: string, starsAmount?: number): Promise<Transaction> {
+  async saveTransaction(transaction: TonTransactionData, username?: string, starsAmount?: number): Promise<Transaction> {
     const newTransaction = new Transaction();
     newTransaction.hash = transaction.hash;
     newTransaction.amount = transaction.amount;
@@ -89,6 +99,18 @@ export class TransactionRepository {
    */
   async getRecentTransactions(page: number = 1, limit: number = 20): Promise<[Transaction[], number]> {
     return await this.repository.findAndCount({
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit
+    });
+  }
+
+  /**
+   * Получение транзакций по статусу с пагинацией
+   */
+  async getTransactionsByStatus(status: 'processed' | 'pending' | 'failed', page: number = 1, limit: number = 20): Promise<[Transaction[], number]> {
+    return await this.repository.findAndCount({
+      where: { status },
       order: { createdAt: 'DESC' },
       skip: (page - 1) * limit,
       take: limit

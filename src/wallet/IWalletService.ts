@@ -1,4 +1,4 @@
-import { SendTransactionParams, TransactionResult, TransactionStatus, WalletConfig } from './models/walletModels';
+import { GetTransactionsParams, SendTransactionParams, TransactionResult, TransactionStatus, WalletConfig, WalletTransaction } from './models/walletModels';
 import { WalletAccount } from '../apiClient/models/apiModels';
 
 /**
@@ -50,4 +50,11 @@ export interface IWalletService {
    * @returns Финальный статус транзакции
    */
   waitForTransactionCompletion(transactionHash: string, timeout?: number): Promise<TransactionStatus>;
+  
+  /**
+   * Получает историю транзакций кошелька
+   * @param params Параметры запроса транзакций (лимит, пагинация)
+   * @returns Массив транзакций кошелька
+   */
+  getTransactions(params?: GetTransactionsParams): Promise<WalletTransaction[]>;
 } 

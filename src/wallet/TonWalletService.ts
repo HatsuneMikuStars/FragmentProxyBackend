@@ -1,7 +1,7 @@
 import { TonClient, WalletContractV4, beginCell, toNano, internal, Address, SendMode } from '@ton/ton';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { IWalletService } from './IWalletService';
-import { SendTransactionParams, TransactionResult, TransactionStatus, WalletConfig } from './models/walletModels';
+import { GetTransactionsParams, SendTransactionParams, TransactionResult, TransactionStatus, TransactionType, WalletConfig, WalletTransaction } from './models/walletModels';
 import { WalletAccount } from '../apiClient/models/apiModels';
 
 /**
@@ -327,5 +327,312 @@ export class TonWalletService implements IWalletService {
       publicKey: this.keyPair.publicKey.toString('hex'),
       walletStateInit
     };
+  }
+  
+  /**
+   * Извлекает комментарий из тела сообщения, если есть
+   * @param body Тело сообщения
+   * @returns Комментарий или undefined
+   */
+  private extractCommentFromBody(body: any): string | undefined {
+    if (!body) return undefined;
+    
+    // Вспомогательная функция для безопасной сериализации объектов с BigInt
+    const safeJsonStringify = (obj: any, space: number = 2): string => {
+      return JSON.stringify(obj, (key, value) => {
+        if (typeof value === 'bigint') {
+          return value.toString() + 'n';
+        }
+        return value;
+      }, space);
+    };
+    
+    console.log("🔍 Анализ тела сообщения:", typeof body);
+    
+    try {
+      // Способ 1: Стандартный для @ton/ton - комментарий в виде Cell с опкодом 0
+      if (typeof body === 'object' && body !== null && typeof body.beginParse === 'function') {
+        console.log("📦 Анализ Cell объекта");
+        const bodySlice = body.beginParse();
+        
+        if (bodySlice.remainingBits >= 32) {
+          const op = bodySlice.loadUint(32);
+          console.log(`📑 Обнаружен опкод: ${op}`);
+          
+          if (op === 0) {
+            // op = 0 означает текстовый комментарий
+            const comment = bodySlice.loadStringTail();
+            console.log(`💬 Извлечен комментарий из Cell (опкод 0): "${comment}"`);
+            return comment;
+          }
+        }
+      }
+      
+      // Способ 2: Для сообщений в формате MCP/TON API - комментарий в декодированном теле
+      if (typeof body === 'object' && body !== null) {
+        // Проверяем наличие decoded_body с полем text (как в ответе MCP)
+        if (body.decoded_body && body.decoded_body.text) {
+          console.log(`💬 Извлечен комментарий из decoded_body.text: "${body.decoded_body.text}"`);
+          return body.decoded_body.text;
+        }
+        
+        // Проверяем наличие decoded_op_name "text_comment"
+        if (body.decoded_op_name === 'text_comment' && body.decoded_body && body.decoded_body.text) {
+          console.log(`💬 Извлечен комментарий из text_comment: "${body.decoded_body.text}"`);
+          return body.decoded_body.text;
+        }
+        
+        // Проверяем наличие body с полем text
+        if (body.body && body.body.text) {
+          console.log(`💬 Извлечен комментарий из body.text: "${body.body.text}"`);
+          return body.body.text;
+        }
+        
+        // Проверяем наличие текстового комментария в других форматах
+        if (body.text && typeof body.text === 'string') {
+          console.log(`💬 Извлечен комментарий из поля text: "${body.text}"`);
+          return body.text;
+        }
+        
+        // Иногда комментарий может быть в свойстве comment
+        if (body.comment && typeof body.comment === 'string') {
+          console.log(`💬 Извлечен комментарий из поля comment: "${body.comment}"`);
+          return body.comment;
+        }
+        
+        // Проверяем наличие данных в формате base64
+        if (body.data && typeof body.data === 'string') {
+          try {
+            // Пробуем декодировать base64 строку
+            const decoded = Buffer.from(body.data, 'base64').toString('utf8');
+            if (decoded && decoded.length > 0 && /^[\x00-\x7F]*$/.test(decoded)) {
+              console.log(`💬 Извлечен комментарий из data (base64): "${decoded}"`);
+              return decoded;
+            }
+          } catch (e) {
+            // Если декодирование не удалось, игнорируем ошибку
+          }
+        }
+      }
+      
+      // Способ 3: JSON сериализованный комментарий
+      if (typeof body === 'string' && body.startsWith('{') && body.endsWith('}')) {
+        try {
+          const jsonBody = JSON.parse(body);
+          if (jsonBody.text || jsonBody.comment || jsonBody.message) {
+            const comment = jsonBody.text || jsonBody.comment || jsonBody.message;
+            console.log(`💬 Извлечен комментарий из JSON строки: "${comment}"`);
+            return comment;
+          }
+        } catch (e) {
+          // Если парсинг JSON не удался, это не JSON
+        }
+      }
+      
+      // Способ 4: Прямой текстовый комментарий
+      if (typeof body === 'string' && body.length > 0) {
+        // Не выводим весь комментарий в лог, если он слишком длинный
+        const logComment = body.length > 50 ? body.substring(0, 47) + '...' : body;
+        console.log(`💬 Использован прямой текстовый комментарий: "${logComment}"`);
+        return body;
+      }
+      
+      // Если дошли до этого места, но комментарий не найден, выводим информацию для отладки
+      if (typeof body === 'object' && body !== null) {
+        console.log("⚠️ Комментарий не найден. Структура тела сообщения:", safeJsonStringify(body));
+      }
+    } catch (err) {
+      console.warn("❌ Ошибка при извлечении комментария:", err);
+    }
+    
+    console.log("❌ Комментарий не найден");
+    return undefined;
+  }
+  
+  /**
+   * Получает историю транзакций кошелька
+   * @param params Параметры запроса транзакций (лимит, пагинация)
+   * @returns Массив транзакций кошелька
+   */
+  async getTransactions(params: GetTransactionsParams): Promise<WalletTransaction[]> {
+    this.checkInitialization();
+    
+    if (!this.client || !this.wallet) {
+      throw new Error("Кошелек не инициализирован");
+    }
+    
+    try {
+      const address = this.wallet.address;
+      const limit = params.limit || 10;
+      const lt = params.lt;
+      const hash = params.hash;
+      const to_lt = params.to_lt;
+      const archival = params.archival || false;
+      
+      // Получаем транзакции с архивного сервера, если нужно
+      const transactions = await this.client.getTransactions(address, {
+        limit,
+        lt,
+        hash,
+        to_lt,
+        archival
+      });
+      
+      // Преобразуем транзакции в наш формат
+      return transactions.map(tx => this.convertTonTransaction(tx));
+    } catch (error) {
+      console.error('Ошибка при получении транзакций:', error);
+      throw new Error('Не удалось получить список транзакций');
+    }
+  }
+  
+  /**
+   * Получение транзакции по хешу
+   * @param hash Хеш транзакции
+   * @returns Транзакция или null, если не найдена
+   */
+  async getTransactionByHash(hash: string): Promise<WalletTransaction | null> {
+    this.checkInitialization();
+    
+    if (!this.client || !this.wallet) {
+      throw new Error("Кошелек не инициализирован");
+    }
+    
+    try {
+      // Получаем последние транзакции и ищем по хешу
+      const transactions = await this.getTransactions({
+        limit: 50,
+        archival: true
+      });
+      
+      // Ищем транзакцию с нужным хешем
+      const transaction = transactions.find(tx => tx.id === hash);
+      return transaction || null;
+    } catch (error) {
+      console.error(`Ошибка при получении транзакции по хешу ${hash}:`, error);
+      return null;
+    }
+  }
+  
+  /**
+   * Преобразует транзакцию TON в формат WalletTransaction
+   * @param tx Транзакция TON
+   * @returns Транзакция в формате WalletTransaction
+   */
+  private convertTonTransaction(tx: any): WalletTransaction {
+    const myAddress = this.wallet!.address.toString();
+    
+    // Определяем тип транзакции (входящая или исходящая)
+    let type = TransactionType.UNKNOWN;
+    let fromAddress = '';
+    let toAddress = '';
+    let amount = BigInt(0);
+    let comment: string | undefined;
+    
+    // Обработка входящего сообщения
+    const inMessage = tx.inMessage;
+    if (inMessage && inMessage.info && inMessage.info.type === 'internal' && inMessage.info.src) {
+      // Входящий перевод
+      type = TransactionType.INCOMING;
+      fromAddress = inMessage.info.src.toString();
+      toAddress = myAddress;
+      
+      // Преобразуем сумму в BigInt
+      if (inMessage.info.value && inMessage.info.value.coins) {
+        amount = BigInt(inMessage.info.value.coins);
+      }
+      
+      // Извлекаем комментарий
+      comment = this.extractCommentFromBody(inMessage.body);
+      console.log(`📥 Обработано входящее сообщение от: ${fromAddress}, сумма: ${amount}, комментарий: "${comment || 'нет'}"`);
+    } 
+    
+    // Обработка исходящих сообщений
+    let outMessages: any[] = [];
+    
+    // Преобразуем outMessages в массив для унифицированной обработки
+    if (tx.outMessages) {
+      if (Array.isArray(tx.outMessages)) {
+        outMessages = tx.outMessages;
+      } else if (typeof tx.outMessages.get === 'function') {
+        // Если это словарь, преобразуем его в массив
+        outMessages = [];
+        for (let i = 0; i < 10; i++) { // Предполагаем, что максимум 10 сообщений
+          const msg = tx.outMessages.get(i);
+          if (msg) outMessages.push(msg);
+          else break;
+        }
+      }
+    }
+    
+    // Если есть исходящие сообщения, обрабатываем их
+    if (outMessages.length > 0) {
+      console.log(`📤 Найдено ${outMessages.length} исходящих сообщений`);
+      
+      // Обрабатываем первое исходящее сообщение (обычно основное для простых переводов)
+      const firstOutMsg = outMessages[0];
+      
+      if (firstOutMsg && firstOutMsg.info && firstOutMsg.info.type === 'internal' && firstOutMsg.info.dest) {
+        // Если нет входящего сообщения или тип уже не определен как входящий,
+        // считаем транзакцию исходящей
+        if (type !== TransactionType.INCOMING) {
+          type = TransactionType.OUTGOING;
+          fromAddress = myAddress;
+          toAddress = firstOutMsg.info.dest.toString();
+          
+          // Преобразуем сумму в BigInt
+          if (firstOutMsg.info.value && firstOutMsg.info.value.coins) {
+            amount = BigInt(firstOutMsg.info.value.coins);
+          }
+          
+          // Извлекаем комментарий
+          comment = this.extractCommentFromBody(firstOutMsg.body);
+          console.log(`📤 Обработано исходящее сообщение к: ${toAddress}, сумма: ${amount}, комментарий: "${comment || 'нет'}"`);
+        }
+      }
+    }
+    
+    // Вычисляем комиссию
+    const fee = tx.totalFees && tx.totalFees.coins 
+      ? BigInt(tx.totalFees.coins) 
+      : BigInt(0);
+    
+    // Преобразуем хеш в строку (в зависимости от типа)
+    let hashString: string = 'unknown_hash';
+    
+    try {
+      if (typeof tx.hash === 'function') {
+        hashString = tx.hash();
+      } else if (typeof tx.hash === 'string') {
+        hashString = tx.hash;
+      } else if (tx.hash) {
+        // Для всех остальных случаев просто преобразуем в строку
+        hashString = String(tx.hash);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Ошибка при преобразовании хеша: ${error}`);
+      hashString = 'hash_error';
+    }
+    
+    // Формируем объект транзакции
+    const walletTx: WalletTransaction = {
+      id: `${tx.lt}_${hashString}`,
+      type,
+      timestamp: tx.now || Math.floor(Date.now() / 1000),
+      lt: String(tx.lt),
+      hash: hashString,
+      fromAddress,
+      toAddress,
+      amount,
+      fee,
+      comment,
+      status: TransactionStatus.COMPLETED, // Все полученные транзакции считаем завершенными
+      additionalData: {
+        // Дополнительные данные о транзакции могут быть полезны для отладки
+        utime: tx.now
+      }
+    };
+    
+    return walletTx;
   }
 } 
