@@ -1,37 +1,37 @@
-// Импортируем необходимые модули для работы с базой данных
-import 'reflect-metadata'; // Обязательный импорт для TypeORM
+// Import required modules for database operations
+import 'reflect-metadata'; // Required import for TypeORM
 import { AppDataSource, initializeDatabase, closeDatabase } from './config/database.config';
 
-// Экспорт основных сущностей и репозиториев
-// По мере добавления новых моделей, добавляйте их экспорт здесь
+// Export main entities and repositories
+// Add exports for new models here as they are created
 export * from './entities/transaction.entity';
 export * from './repositories/transaction.repository';
 
-// Экспорт основного интерфейса для работы с базой данных
+// Export main database interface
 export {
   AppDataSource,
   initializeDatabase,
   closeDatabase
 };
 
-// Функция для проверки существования таблиц и выполнения миграций при необходимости
+// Function to check table existence and run migrations if needed
 export async function ensureDatabaseReady(): Promise<void> {
   try {
     const dataSource = await initializeDatabase();
     
-    // Проверяем, нужно ли выполнить миграции
+    // Check if migrations need to be run
     const pendingMigrations = await dataSource.showMigrations();
     if (pendingMigrations) {
-      console.log('[Database] Обнаружены ожидающие миграции, выполняем...');
+      console.log('[Database] Pending migrations detected, running...');
       await dataSource.runMigrations();
-      console.log('[Database] Миграции успешно выполнены');
+      console.log('[Database] Migrations completed successfully');
     } else {
-      console.log('[Database] Миграции не требуются');
+      console.log('[Database] No migrations needed');
     }
     
-    console.log('[Database] База данных готова к использованию');
+    console.log('[Database] Database ready for use');
   } catch (error) {
-    console.error('[Database] Ошибка при подготовке базы данных:', error);
+    console.error('[Database] Error preparing database:', error);
     throw error;
   }
 } 
