@@ -10,6 +10,11 @@ interface TonTransactionData {
   timestamp: number;
   comment?: string;
   senderAddress?: string;
+  gasFee?: number;               // Комиссия за газ
+  amountAfterGas?: number;       // Сумма после вычета газа
+  exchangeRate?: number;         // Курс обмена TON -> звезды на момент транзакции
+  status?: 'pending' | 'processed' | 'failed';  // Статус обработки
+  statusMsg?: string;            // Дополнительное сообщение о статусе
 }
 
 /**
@@ -47,7 +52,17 @@ export class TransactionRepository {
     newTransaction.comment = transaction.comment || null;
     newTransaction.username = username || null;
     newTransaction.starsAmount = starsAmount || null;
-    newTransaction.status = 'processed';
+    newTransaction.status = transaction.status || 'processed';
+    
+    // Добавляем новые поля
+    newTransaction.gasFee = transaction.gasFee || null;
+    newTransaction.amountAfterGas = transaction.amountAfterGas || null;
+    newTransaction.exchangeRate = transaction.exchangeRate || null;
+    
+    // Если есть сообщение о статусе, сохраняем его как сообщение об ошибке
+    if (transaction.statusMsg) {
+      newTransaction.errorMessage = transaction.statusMsg;
+    }
 
     return await this.repository.save(newTransaction);
   }

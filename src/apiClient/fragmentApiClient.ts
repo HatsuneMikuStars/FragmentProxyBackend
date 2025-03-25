@@ -106,19 +106,20 @@ export class FragmentApiClient {
   /**
    * Поиск получателей по имени пользователя
    * @param username Имя пользователя для поиска
+   * @param quantity Количество звезд (влияет на результаты поиска в API Fragment)
    * @returns Результат поиска с информацией о получателях
    */
-  public async searchRecipientsAsync(username: string): Promise<SearchRecipientsResponse> {
-    console.log(`Поиск пользователя: ${username}`);
+  public async searchRecipientsAsync(username: string, quantity: number): Promise<SearchRecipientsResponse> {
+    console.log(`Поиск пользователя: ${username} (для ${quantity} звезд)`);
     
     const headers = this.addDefaultHeaders({
-      'Referer': `${this._baseUrl}/stars/buy?quantity=50`
+      'Referer': `${this._baseUrl}/stars/buy?quantity=${quantity}`
     });
     
     const formData = new URLSearchParams();
     formData.append('hash', this._apiHash);
     formData.append('query', username);
-    formData.append('quantity', '50');
+    formData.append('quantity', quantity.toString());
     formData.append('method', 'searchStarsRecipient');
     
     try {
@@ -389,7 +390,7 @@ export class FragmentApiClient {
     console.log(`\n[API] Начало мониторинга статуса для reqId: ${reqId}`);
     
     let attempts = 0;
-    let currentMode = this.currentMode || "new";
+    let currentMode = this.currentMode || "processing"; // Начинаем сразу с processing
     let currentDh = this.currentDh || "";
     
     let stableStateCounter = 0;
@@ -397,170 +398,125 @@ export class FragmentApiClient {
     let previousState = "";
     let lastHtmlContent = "";
     
-    // Попробуем сразу после confirmReq принудительно отправить запрос с mode=done
-    // Это может помочь правильно инициализировать состояние на сервере
-    try {
-      console.log("[API] Отправка принудительного запроса в режиме done для инициализации");
-      const forceDoneResponse = await this.updatePurchaseStateAsync(reqId, "done", currentDh);
-      
-      if (forceDoneResponse.ok) {
-        if (forceDoneResponse.mode) {
-          currentMode = forceDoneResponse.mode;
-          this.currentMode = currentMode;
-        }
-        
-        if (forceDoneResponse.dh) {
-          currentDh = forceDoneResponse.dh;
-          this.currentDh = currentDh;
-        }
-      }
-    } catch (ex) {
-      console.log(`[API] Ошибка принудительного запроса: ${(ex as Error).message}`);
-    }
+    // Удаляем принудительный запрос с mode=done, чтобы избежать создания новых сессий
     
-    // После принудительного запроса возвращаемся к processing для обычного мониторинга
-    currentMode = "processing";
-    this.currentMode = "processing";
+    console.log(`[API] Попытка №1 проверки статуса. Mode: ${currentMode}`);
     
     while (maxAttempts === 0 || attempts < maxAttempts) {
       attempts++;
+      
       console.log(`\n[API] Попытка проверки статуса #${attempts}. Mode: ${currentMode}`);
       
-      try {
-        const statusResponse = await this.updatePurchaseStateAsync(reqId, currentMode, currentDh);
+      // Получаем текущий статус
+      const statusResponse = await this.updatePurchaseStateAsync(reqId, currentMode, currentDh);
+      
+      // Проверяем на ошибку запроса
+      if (!statusResponse.ok && statusResponse.state?.status === "error") {
+        console.log(`[API] Ошибка при попытке #${attempts}: ${statusResponse.state.msg}`);
         
-        // Проверяем индикаторы завершения
-        let completionDetected = false;
-        
-        // 1. Проверяем режим и состояние
-        if (statusResponse.mode === "done" || statusResponse.state?.status === "done") {
-          console.log("[API] Обнаружен режим done");
-          stableStateCounter++;
-          completionDetected = true;
+        // Если ошибка связана с HTTP, пробуем еще раз
+        if (statusResponse.state.msg.includes("HTTP Error")) {
+          console.log("[API] Ошибка сети, повторная попытка через 3 секунды");
+          await new Promise<void>(resolve => setTimeout(resolve, 3000));
+          continue;
         }
         
-        // 2. Проверяем HTML-контент
-        if (statusResponse.html && typeof statusResponse.html === 'string') {
-          const shortHtml = statusResponse.html.substring(0, 100) + "...";
-          console.log(`[API] Получен HTML: ${shortHtml}`);
+        // Возвращаем ошибку клиенту
+        return {
+          ok: false,
+          state: "error",
+          error: statusResponse.state.msg
+        };
+      }
+      
+      // Если получен HTML с уведомлением об успешной покупке
+      if (statusResponse.html) {
+        // Сохраняем последний HTML
+        lastHtmlContent = statusResponse.html;
+        
+        // Проверяем на завершение
+        if (lastHtmlContent.includes("purchase has been completed") || 
+            lastHtmlContent.includes("stars have been credited") || 
+            lastHtmlContent.includes("успешно зачислены") ||
+            lastHtmlContent.includes("successful")) {
           
-          if (statusResponse.html.includes("Stars received") || 
-              statusResponse.html.includes("Звезды получены") ||
-              statusResponse.html.includes("Purchase completed")) {
-            console.log("[API] Найден индикатор завершения в HTML");
-            stableStateCounter++;
-            completionDetected = true;
-          }
-        }
-        
-        // 3. Проверяем длительное пребывание в processing
-        if (statusResponse.mode === "processing") {
-          processingCounter++;
-          console.log(`[API] Режим processing: попытка ${processingCounter}`);
-          
-          // Каждые 5 попыток отправляем принудительный запрос в режиме done
-          if (processingCounter % 5 === 0) {
-            console.log("[API] Принудительная проверка режима done");
-            const testDoneResponse = await this.updatePurchaseStateAsync(reqId, "done", currentDh);
-            
-            if (testDoneResponse.ok) {
-              if (testDoneResponse.mode === "done" || testDoneResponse.state?.status === "done") {
-                console.log("[API] Режим done подтвержден принудительным запросом");
-                stableStateCounter += 2;
-                completionDetected = true;
-              }
-              
-              if (testDoneResponse.dh) {
-                currentDh = testDoneResponse.dh;
-                this.currentDh = currentDh;
-              }
-            }
-          }
-          
-          // После 15 попыток в режиме processing, принудительно завершаем
-          if (processingCounter >= 15) {
-            console.log("[API] Превышено максимальное время ожидания в режиме processing");
-            return {
-              ok: true,
-              state: "completed", // Принудительно считаем завершенным
-              error: null
-            };
-          }
-        } else {
-          processingCounter = 0;
-        }
-        
-        // Если не обнаружено признаков завершения, сбрасываем счетчик
-        if (!completionDetected) {
-          stableStateCounter = 0;
-        } else {
-          console.log(`[API] Обнаружены признаки завершения: ${stableStateCounter}/3`);
-        }
-        
-        // Проверяем стабильность состояния
-        if (stableStateCounter >= 3) {
-          console.log("[API] Транзакция завершена успешно");
+          console.log("[API] Обнаружен HTML с подтверждением успешной покупки");
           return {
             ok: true,
             state: "completed",
             error: null
           };
         }
-        
-        // Обновляем режим и dh для следующего запроса
-        if (statusResponse.ok) {
-          if (statusResponse.mode) {
-            currentMode = statusResponse.mode;
-            this.currentMode = currentMode;
-          }
-          
-          if (statusResponse.dh) {
-            currentDh = statusResponse.dh;
-            this.currentDh = currentDh;
-          }
-          
-          // Проверяем needUpdate
-          if (statusResponse.needUpdate) {
-            console.log("[API] Дополнительный запрос из-за needUpdate=true");
-            const updateResponse = await this.updatePurchaseStateAsync(reqId, currentMode, currentDh);
-            
-            if (updateResponse.ok) {
-              if (updateResponse.mode) {
-                currentMode = updateResponse.mode;
-                this.currentMode = currentMode;
-              }
-              
-              if (updateResponse.dh) {
-                currentDh = updateResponse.dh;
-                this.currentDh = currentDh;
-              }
-            }
-          }
-        }
-        
-        // Проверяем наличие ошибки
-        if (statusResponse.state?.status === "error") {
-          console.log(`[API] Ошибка в статусе: ${statusResponse.state.msg}`);
-          return {
-            ok: false,
-            state: "error",
-            error: statusResponse.state.msg
-          };
-        }
-        
-        // Задержка перед следующей проверкой
-        await new Promise<void>(resolve => setTimeout(resolve, delayBetweenAttempts));
-      } catch (ex) {
-        console.log(`[API] Ошибка проверки: ${(ex as Error).message}`);
-        await new Promise<void>(resolve => setTimeout(resolve, delayBetweenAttempts));
       }
+      
+      // Переключение режима после определенного количества попыток
+      if (currentMode === "processing" && processingCounter >= 10) {
+        console.log("[API] Режим processing: попытка " + processingCounter);
+        // После 10 попыток проверяем режим done
+        if (processingCounter % 10 === 0) {
+          console.log("[API] Принудительная проверка режима done");
+          const doneResponse = await this.updatePurchaseStateAsync(reqId, "done", currentDh);
+          
+          // Не меняем режим обратно на processing, если done вернул успех
+          if (doneResponse.ok && doneResponse.mode === "done") {
+            currentMode = "done";
+            this.currentMode = currentMode;
+            
+            if (doneResponse.dh) {
+              currentDh = doneResponse.dh;
+              this.currentDh = currentDh;
+            }
+            
+            console.log("[API] Режим изменен на done");
+          }
+        }
+        
+        processingCounter++;
+      } else if (currentMode === "processing") {
+        processingCounter++;
+      }
+      
+      // Обновляем режим и dh для следующего запроса
+      if (statusResponse.ok) {
+        // Если есть изменения в режиме, принимаем их
+        if (statusResponse.mode && statusResponse.mode !== currentMode) {
+          console.log(`[API] Режим изменен с ${currentMode} на ${statusResponse.mode}`);
+          currentMode = statusResponse.mode;
+          this.currentMode = currentMode;
+        }
+        
+        if (statusResponse.dh) {
+          currentDh = statusResponse.dh;
+          this.currentDh = currentDh;
+        }
+        
+        // Проверяем needUpdate - НЕ создаем новую сессию, а обновляем состояние текущей
+        if (statusResponse.needUpdate) {
+          console.log("[API] Получен флаг needUpdate=true, продолжаем с текущим режимом");
+          // Не делаем дополнительных запросов, которые могут создать множественные сессии
+        }
+      }
+      
+      // Проверяем наличие ошибки
+      if (statusResponse.state?.status === "error") {
+        console.log(`[API] Ошибка в статусе: ${statusResponse.state.msg}`);
+        return {
+          ok: false,
+          state: "error",
+          error: statusResponse.state.msg
+        };
+      }
+      
+      // Задержка перед следующей проверкой
+      await new Promise<void>(resolve => setTimeout(resolve, delayBetweenAttempts));
     }
     
-    console.log(`[API] Достигнуто максимальное число попыток (${maxAttempts})`);
+    // Если исчерпаны все попытки
+    console.log(`[API] Исчерпано максимальное количество попыток (${maxAttempts})`);
     return {
-      ok: true,
+      ok: false,
       state: "timeout",
-      error: `Достигнуто максимальное количество попыток (${maxAttempts})`
+      error: "Timeout waiting for transaction completion"
     };
   }
 

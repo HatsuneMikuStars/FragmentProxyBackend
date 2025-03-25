@@ -114,7 +114,9 @@ async function startServer() {
       account.address,
       account.publicKey,
       account.walletStateInit,
-      FRAGMENT_CONFIG.BASE_URL
+      FRAGMENT_CONFIG.BASE_URL,
+      {},
+      tonWalletService
     );
     
     // Initialize transaction monitor with repository

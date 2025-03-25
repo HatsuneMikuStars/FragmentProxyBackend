@@ -18,6 +18,24 @@ export class Transaction {
   amount: number;
 
   /**
+   * Комиссия за газ в TON
+   */
+  @Column({ type: 'decimal', precision: 15, scale: 9, nullable: true })
+  gasFee: number | null;
+
+  /**
+   * Сумма после вычета газа в TON
+   */
+  @Column({ type: 'decimal', precision: 15, scale: 9, nullable: true })
+  amountAfterGas: number | null;
+
+  /**
+   * Курс обмена TON -> звезды на момент транзакции
+   */
+  @Column({ type: 'decimal', precision: 15, scale: 9, nullable: true })
+  exchangeRate: number | null;
+
+  /**
    * Адрес отправителя
    */
   @Column({ type: 'varchar', length: 64, nullable: true })
