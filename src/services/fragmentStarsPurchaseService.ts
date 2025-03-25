@@ -15,6 +15,7 @@ import {
 } from './models/purchaseModels';
 import { IWalletService } from '../wallet/IWalletService';
 import { TransactionStatus } from '../wallet/models/walletModels';
+import { TRANSACTION_MONITOR_CONFIG, FRAGMENT_CONFIG } from '../config';
 
 /**
  * Сервис для покупки звезд на платформе Fragment
@@ -339,6 +340,46 @@ export class FragmentStarsPurchaseService {
       return result;
     } catch (error) {
       return "[НЕ УДАЛОСЬ ДЕКОДИРОВАТЬ PAYLOAD: " + payloadBase64 + "]";
+    }
+  }
+
+  /**
+   * Получает актуальный курс обмена TON на звезды
+   * @returns Коэффициент конверсии (звезд на 1 TON)
+   */
+  public async getStarsExchangeRate(): Promise<number> {
+    try {
+      console.log('[Fragment] Getting current stars exchange rate');
+      
+      // Запрашиваем цену для базового пакета в 50 звезд
+      const priceResponse = await this._fragmentClient.updateStarsPricesAsync(50);
+      
+      if (!priceResponse.ok || priceResponse.starsPerTon <= 0) {
+        console.warn('[Fragment] Failed to get valid exchange rate, using default');
+        return TRANSACTION_MONITOR_CONFIG.STARS_PER_TON;
+      }
+      
+      console.log(`[Fragment] Current exchange rate: ${priceResponse.starsPerTon.toFixed(2)} stars per TON`);
+      return priceResponse.starsPerTon;
+    } catch (error) {
+      console.error('[Fragment] Error getting stars exchange rate:', error);
+      return TRANSACTION_MONITOR_CONFIG.STARS_PER_TON;
+    }
+  }
+
+  /**
+   * Обновляет конфигурацию курса обмена
+   * @returns Обновленный коэффициент конверсии
+   */
+  public async updateExchangeRateConfig(): Promise<number> {
+    try {
+      const rate = await this.getStarsExchangeRate();
+      // Обновляем конфигурацию для использования в других частях приложения
+      TRANSACTION_MONITOR_CONFIG.STARS_PER_TON = rate;
+      return rate;
+    } catch (error) {
+      console.error('[Fragment] Error updating exchange rate config:', error);
+      return TRANSACTION_MONITOR_CONFIG.STARS_PER_TON;
     }
   }
 } 

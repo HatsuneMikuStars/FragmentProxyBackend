@@ -145,4 +145,44 @@ export class FragmentApiException extends Error {
     super(message);
     this.name = 'FragmentApiException';
   }
+}
+
+/**
+ * Ответ API Fragment для метода updateStarsPrices
+ */
+export interface StarsPriceResponse {
+  /**
+   * Успешность запроса
+   */
+  ok: boolean;
+
+  /**
+   * HTML-строка с текущей ценой
+   */
+  curPrice: string;
+
+  /**
+   * HTML-строка с опциями пакетов звезд
+   */
+  optionsHtml: string;
+
+  /**
+   * Динамический хеш для защиты от CSRF
+   */
+  dh: number;
+
+  /**
+   * Извлеченная цена в TON за указанное количество звезд
+   */
+  tonPrice: number;
+
+  /**
+   * Количество звезд в запросе
+   */
+  starsAmount: number;
+
+  /**
+   * Коэффициент конверсии (количество звезд на 1 TON)
+   */
+  starsPerTon: number;
 } 

@@ -13,7 +13,8 @@ import {
   GetBuyStarsLinkResponse, 
   WalletAccount,
   DeviceInfo,
-  FragmentApiException
+  FragmentApiException,
+  StarsPriceResponse
 } from './models/apiModels';
 import { FRAGMENT_CONFIG } from '../config';
 
@@ -769,6 +770,86 @@ export class FragmentApiClient {
     } catch (ex) {
       console.log(`[FragmentAPI] Ошибка запроса: ${(ex as Error).message}`);
       return false;
+    }
+  }
+
+  /**
+   * Получает актуальный курс обмена TON на звезды
+   * @param starsAmount Количество звезд для расчета
+   * @returns Информация о текущих ценах на звезды
+   */
+  public async updateStarsPricesAsync(starsAmount: number = 50): Promise<StarsPriceResponse> {
+    console.log(`[FragmentAPI] Getting current stars price for ${starsAmount} stars`);
+    
+    const headers = this.addDefaultHeaders({
+      'Referer': `${this._baseUrl}/stars/buy?quantity=${starsAmount}`
+    });
+    
+    const formData = new URLSearchParams();
+    formData.append('hash', this._apiHash);
+    formData.append('stars', starsAmount.toString());
+    formData.append('quantity', starsAmount.toString());
+    formData.append('method', 'updateStarsPrices');
+    
+    try {
+      const response = await fetch(`${this._baseUrl}/api`, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: AbortSignal.timeout(15000)
+      });
+      
+      if (!response.ok) {
+        throw new FragmentApiException(
+          `Error getting stars prices: ${response.status} - ${response.statusText}`
+        );
+      }
+      
+      const content = await response.text();
+      console.log(`[FragmentAPI] Stars price response received`);
+      
+      try {
+        const responseJson = JSON.parse(content);
+        
+        if (!responseJson.ok) {
+          throw new FragmentApiException(`API returned error in stars price response`);
+        }
+        
+        // Извлекаем цену из HTML-строки
+        const curPrice = responseJson.cur_price || "";
+        const priceMatch = curPrice.match(/>([\d,.]+)<span class="mini-frac">\.(\d+)<\/span>/);
+        
+        let tonPriceForStars = 0;
+        if (priceMatch && priceMatch.length >= 3) {
+          const wholePart = priceMatch[1].replace(/,/g, '');
+          const fracPart = priceMatch[2];
+          tonPriceForStars = parseFloat(`${wholePart}.${fracPart}`);
+        }
+        
+        // Вычисляем коэффициент конверсии TON в звезды
+        const starsPerTon = tonPriceForStars > 0 ? starsAmount / tonPriceForStars : 0;
+        
+        return {
+          ok: responseJson.ok,
+          curPrice: responseJson.cur_price,
+          optionsHtml: responseJson.options_html,
+          dh: responseJson.dh,
+          // Добавляем обработанные данные
+          tonPrice: tonPriceForStars,
+          starsAmount: starsAmount,
+          starsPerTon: starsPerTon
+        };
+      } catch (ex) {
+        if (ex instanceof FragmentApiException) {
+          throw ex;
+        }
+        throw new FragmentApiException(`Error parsing stars price API response: ${(ex as Error).message}`, ex as Error);
+      }
+    } catch (ex) {
+      if (ex instanceof FragmentApiException) {
+        throw ex;
+      }
+      throw new FragmentApiException(`Error getting stars prices: ${(ex as Error).message}`, ex as Error);
     }
   }
 } 
