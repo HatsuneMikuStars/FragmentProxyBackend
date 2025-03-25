@@ -355,31 +355,29 @@ export class FragmentStarsPurchaseService {
       const priceResponse = await this._fragmentClient.updateStarsPricesAsync(50);
       
       if (!priceResponse.ok || priceResponse.starsPerTon <= 0) {
-        console.warn('[Fragment] Failed to get valid exchange rate, using default');
-        return TRANSACTION_MONITOR_CONFIG.STARS_PER_TON;
+        console.warn('[Fragment] Failed to get valid exchange rate, using default rate of 50');
+        return 50; // Возвращаем базовое значение в случае ошибки
       }
       
       console.log(`[Fragment] Current exchange rate: ${priceResponse.starsPerTon.toFixed(2)} stars per TON`);
       return priceResponse.starsPerTon;
     } catch (error) {
       console.error('[Fragment] Error getting stars exchange rate:', error);
-      return TRANSACTION_MONITOR_CONFIG.STARS_PER_TON;
+      return 50; // Возвращаем базовое значение в случае ошибки
     }
   }
 
   /**
-   * Обновляет конфигурацию курса обмена
-   * @returns Обновленный коэффициент конверсии
+   * Получает текущий курс обмена
+   * @returns Актуальный коэффициент конверсии
+   * @deprecated Используйте getStarsExchangeRate вместо этого метода
    */
   public async updateExchangeRateConfig(): Promise<number> {
     try {
-      const rate = await this.getStarsExchangeRate();
-      // Обновляем конфигурацию для использования в других частях приложения
-      TRANSACTION_MONITOR_CONFIG.STARS_PER_TON = rate;
-      return rate;
+      return await this.getStarsExchangeRate();
     } catch (error) {
-      console.error('[Fragment] Error updating exchange rate config:', error);
-      return TRANSACTION_MONITOR_CONFIG.STARS_PER_TON;
+      console.error('[Fragment] Error getting exchange rate:', error);
+      return 50; // Возвращаем базовое значение в случае ошибки
     }
   }
 } 

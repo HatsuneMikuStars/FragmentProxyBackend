@@ -169,13 +169,16 @@ export class TonTransactionMonitor {
       
       console.log(`[Monitor] Extracted username: @${username}`);
       
-      // Если сумма меньше минимальной, игнорируем
-      const amount = Number(tx.amount) / 1_000_000_000;
-      if (amount < TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT) {
-        console.log(`[Monitor] Amount ${amount} TON is less than minimum ${TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT} TON, ignoring`);
+      // Получаем актуальный курс обмена TON на звезды для этой транзакции
+      let starsPerTon = 0;
+      try {
+        starsPerTon = await this.starsPurchaseService.getStarsExchangeRate();
+        console.log(`[Monitor] Current exchange rate: ${starsPerTon.toFixed(2)} stars per TON`);
+      } catch (error) {
+        console.error(`[Monitor] Failed to get current exchange rate, skipping transaction ${tx.id}`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
-          amount: amount,
+          amount: Number(tx.amount) / 1_000_000_000,
           timestamp: tx.timestamp,
           comment: tx.comment,
           senderAddress: tx.fromAddress || ''
@@ -183,14 +186,17 @@ export class TonTransactionMonitor {
         return;
       }
       
-      // Вычисляем количество звезд на основе полученной суммы
-      const starsAmount = Math.floor(amount * TRANSACTION_MONITOR_CONFIG.STARS_PER_TON);
+      // Конвертируем сумму из наноТОН в TON
+      const tonAmount = Number(tx.amount) / 1_000_000_000;
+      
+      // Вычисляем количество звезд на основе актуального курса и полученной суммы
+      const starsAmount = Math.floor(tonAmount * starsPerTon);
       
       if (starsAmount <= 0) {
         console.log(`[Monitor] Calculated stars amount ${starsAmount} <= 0, ignoring`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
-          amount: amount,
+          amount: tonAmount,
           timestamp: tx.timestamp,
           comment: tx.comment,
           senderAddress: tx.fromAddress || ''
@@ -198,12 +204,12 @@ export class TonTransactionMonitor {
         return;
       }
       
-      console.log(`[Monitor] Sending ${starsAmount} stars to user @${username} (received ${amount} TON)`);
+      console.log(`[Monitor] Sending ${starsAmount} stars to user @${username} (received ${tonAmount} TON, rate: ${starsPerTon})`);
       
       // Сохраняем транзакцию в базу данных
       await this.transactionRepository.saveTransaction({
         hash: tx.id,
-        amount: amount,
+        amount: tonAmount,
         timestamp: tx.timestamp,
         comment: tx.comment,
         senderAddress: tx.fromAddress || ''

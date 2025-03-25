@@ -117,15 +117,6 @@ async function startServer() {
       FRAGMENT_CONFIG.BASE_URL
     );
     
-    // Получаем актуальный курс обмена TON на звезды
-    try {
-      console.log('[Server] Getting current stars exchange rate from Fragment');
-      const currentRate = await starsPurchaseService.updateExchangeRateConfig();
-      console.log(`[Server] Updated stars exchange rate: ${currentRate.toFixed(2)} stars per TON (was: ${TRANSACTION_MONITOR_CONFIG.STARS_PER_TON})`);
-    } catch (error) {
-      console.warn('[Server] Could not update stars exchange rate, using default value:', TRANSACTION_MONITOR_CONFIG.STARS_PER_TON);
-    }
-    
     // Initialize transaction monitor with repository
     transactionMonitor = new TonTransactionMonitor(
       tonWalletService,
