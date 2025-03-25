@@ -20,37 +20,29 @@ export class TonWalletService implements IWalletService {
    */
   async initializeWallet(config: WalletConfig): Promise<void> {
     try {
-      console.log("🔄 Начинаем инициализацию кошелька...");
+      console.log("[Wallet] Initializing TON wallet");
       this.config = config;
       
-      // Создаем клиент TON
+      // Create TON client
       const endpoint = config.apiUrl || 
         (config.useTestnet ? 'https://testnet.toncenter.com/api/v2/jsonRPC' : 'https://toncenter.com/api/v2/jsonRPC');
-      
-      console.log(`📡 Используем endpoint: ${endpoint}`);
       
       this.client = new TonClient({
         endpoint,
         apiKey: config.apiKey
       });
       
-      console.log("👤 Клиент TON создан");
-      
-      // Преобразуем мнемоническую фразу в ключи
+      // Convert mnemonic to keys
       const mnemonicArray = config.mnemonic.split(' ');
-      console.log(`🔑 Преобразуем мнемоническую фразу (${mnemonicArray.length} слов) в ключи...`);
       this.keyPair = await mnemonicToPrivateKey(mnemonicArray);
-      console.log("✅ Ключи получены успешно");
       
-      // Используем явно указанный subwalletId или 0 по умолчанию
+      // Use specified subwalletId or default to 0
       const subwalletId = config.subwalletId !== undefined ? config.subwalletId : 0;
       
-      // Создаем экземпляр кошелька
-      const workchain = 0; // Обычно используется workchain 0
-      console.log(`🏗️ Создаем кошелек с subwalletId: ${subwalletId}`);
+      // Create wallet instance
+      const workchain = 0; // Usually workchain 0 is used
       
-      // Для работы с V5 кошельками используем V4R2, так как это самая новая версия, доступная в библиотеке
-      // При этом правильно указываем ID кошелька
+      // For V5 wallets compatibility, we use V4R2 as this is the newest version available in the library
       this.wallet = WalletContractV4.create({ 
         workchain, 
         publicKey: this.keyPair.publicKey,
@@ -59,11 +51,10 @@ export class TonWalletService implements IWalletService {
       
       this.isInitialized = true;
       const walletAddress = await this.getWalletAddress();
-      console.log(`✅ Кошелек инициализирован. Адрес: ${walletAddress}`);
-      console.log(`⚠️ Внимание: используется WalletContractV4 для работы с V5 кошельком. Некоторые специфические функции V5 могут быть недоступны.`);
+      console.log(`[Wallet] Initialized successfully. Address: ${walletAddress}`);
     } catch (error: any) {
-      console.error('❌ Ошибка при инициализации кошелька:', error);
-      throw new Error(`Не удалось инициализировать кошелек: ${error.message}`);
+      console.error('[Wallet] Initialization error:', error.message);
+      throw new Error(`Failed to initialize wallet: ${error.message}`);
     }
   }
   
@@ -117,16 +108,16 @@ export class TonWalletService implements IWalletService {
     
     try {
       if (!this.client || !this.wallet || !this.keyPair) {
-        throw new Error("Кошелек не инициализирован");
+        throw new Error("Wallet is not initialized");
       }
       
       const maxRetries = params.maxRetries || 3;
       let lastError: Error | null = null;
       
-      // Преобразуем адрес получателя в формат Address
+      // Convert recipient address to Address format
       const toAddress = Address.parse(params.toAddress);
       
-      // Преобразуем сумму в наноТОН
+      // Convert amount to nanoTON
       let amount: bigint;
       if (typeof params.amount === 'string') {
         amount = BigInt(params.amount);
@@ -136,17 +127,16 @@ export class TonWalletService implements IWalletService {
         amount = params.amount;
       }
       
-      // Реализуем стратегию повторных попыток с экспоненциальной задержкой
+      // Implement retry strategy with exponential backoff
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          console.log(`Попытка отправки транзакции ${attempt}/${maxRetries}`);
+          console.log(`[Wallet] Transaction attempt ${attempt}/${maxRetries}`);
           
-          // Открываем кошелек
+          // Open wallet
           const walletContract = this.client.open(this.wallet);
           const seqno = await walletContract.getSeqno();
-          console.log(`Текущий seqno: ${seqno}`);
           
-          // Создаем сообщение
+          // Create message
           const msgParams = {
             to: toAddress,
             value: amount,
@@ -154,16 +144,16 @@ export class TonWalletService implements IWalletService {
             sendMode: SendMode.PAY_GAS_SEPARATELY | SendMode.IGNORE_ERRORS
           };
           
-          // Если есть комментарий, формируем тело сообщения
+          // If there's a comment, form message body
           let msgBody;
           if (params.comment) {
             msgBody = beginCell()
-              .storeUint(0, 32) // op = 0 для текстового комментария
+              .storeUint(0, 32) // op = 0 for text comment
               .storeStringTail(params.comment)
               .endCell();
           }
           
-          // Создаем и отправляем транзакцию
+          // Create and send transaction
           const transfer = await this.wallet.createTransfer({
             seqno,
             secretKey: this.keyPair.secretKey,
@@ -175,17 +165,17 @@ export class TonWalletService implements IWalletService {
                 body: msgBody
               })
             ],
-            validUntil: Math.floor(Date.now() / 1000) + (params.timeout || 60), // По умолчанию транзакция действительна 60 секунд
+            validUntil: Math.floor(Date.now() / 1000) + (params.timeout || 60), // Default transaction valid for 60 seconds
           });
           
-          // Отправляем внешнее сообщение
+          // Send external message
           await this.client.sendExternalMessage(this.wallet, transfer);
           
-          // Получаем хеш транзакции
+          // Get transaction hash
           const transferBoc = transfer.toBoc();
           const txHash = Buffer.from(transferBoc).toString('base64').substring(0, 44);
           
-          console.log(`Транзакция успешно отправлена. Hash: ${txHash}`);
+          console.log(`[Wallet] Transaction sent successfully. Hash: ${txHash}`);
           
           return {
             success: true,
@@ -196,28 +186,28 @@ export class TonWalletService implements IWalletService {
             }
           };
         } catch (error: any) {
-          lastError = new Error(error.message || "Неизвестная ошибка при отправке транзакции");
-          console.error(`Ошибка при отправке транзакции (попытка ${attempt}/${maxRetries}):`, error);
+          lastError = new Error(error.message || "Unknown error sending transaction");
+          console.error(`[Wallet] Transaction error (attempt ${attempt}/${maxRetries}): ${error.message}`);
           
-          // Если это последняя попытка, выбрасываем ошибку
+          // If this is the last attempt, throw the error
           if (attempt === maxRetries) {
             throw lastError;
           }
           
-          // Экспоненциальная задержка между попытками (1s, 2s, 4s, ...)
+          // Exponential backoff between attempts (1s, 2s, 4s, ...)
           const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30000);
-          console.log(`Ожидание ${delay}мс перед следующей попыткой...`);
+          console.log(`[Wallet] Waiting ${delay}ms before next attempt...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
       
-      // Если все попытки завершились неудачно
-      throw lastError || new Error('Не удалось отправить транзакцию после нескольких попыток');
+      // If all attempts failed
+      throw lastError || new Error('Failed to send transaction after multiple attempts');
     } catch (error: any) {
-      console.error('Ошибка при отправке транзакции:', error);
+      console.error('[Wallet] Transaction failed:', error.message);
       return {
         success: false,
-        errorMessage: error.message || 'Неизвестная ошибка при отправке транзакции'
+        errorMessage: error.message || 'Unknown transaction error'
       };
     }
   }
