@@ -575,7 +575,8 @@ export class FragmentApiClient {
     id: string,
     showSender: number
   ): Promise<GetBuyStarsLinkResponse> {
-    console.log(`Получение данных для транзакции: id ${id}, showSender ${showSender}`);
+    // Уменьшаем детализацию лога
+    console.log(`[FragmentAPI] Получение данных для транзакции ${id}`);
     
     const headers = this.addDefaultHeaders();
     
@@ -622,7 +623,8 @@ export class FragmentApiClient {
       }
       
       const content = await response.text();
-      console.log(`Ответ данных транзакции: ${content}`);
+      // Не выводим полный ответ
+      // console.log(`Ответ данных транзакции: ${content}`);
       
       try {
         const responseObject = JSON.parse(content);
@@ -638,7 +640,7 @@ export class FragmentApiClient {
         
         // Проверяем формат ответа и наличие необходимых полей
         if (!responseObject.transaction || !Array.isArray(responseObject.transaction.messages)) {
-          console.error("Неверный формат ответа API:", responseObject);
+          console.error("[FragmentAPI] Неверный формат ответа API");
           
           // Попытка извлечь данные из других полей если возможно
           let messages = [];
@@ -689,7 +691,7 @@ export class FragmentApiClient {
     account: WalletAccount, 
     deviceInfo?: DeviceInfo
   ): Promise<boolean> {
-    console.log(`\n[API] confirmReq вызов: reqId=${reqId}`);
+    console.log(`[FragmentAPI] Подтверждение транзакции ${reqId}`);
     
     const headers = this.addDefaultHeaders({
       'Referer': `${this._baseUrl}/stars/buy?req_id=${reqId}`
@@ -724,8 +726,8 @@ export class FragmentApiClient {
     formData.append('id', reqId);
     formData.append('method', 'confirmReq');
     
-    // Логируем отправляемые данные
-    console.log(`[API] confirmReq данные: ${formData.toString().substring(0, 100)}...`);
+    // Удаляем лишние данные в логе
+    // console.log(`[API] confirmReq данные: ${formData.toString().substring(0, 100)}...`);
     
     try {
       const response = await fetch(`${this._baseUrl}/api`, {
@@ -736,18 +738,19 @@ export class FragmentApiClient {
       });
       
       if (!response.ok) {
-        console.log(`[API] confirmReq ошибка: ${response.status} - ${response.statusText}`);
+        console.log(`[FragmentAPI] Ошибка подтверждения: ${response.status}`);
         return false;
       }
       
       const content = await response.text();
-      console.log(`[API] confirmReq ответ: ${content}`);
+      // Убираем вывод полного содержимого ответа
+      // console.log(`[API] confirmReq ответ: ${content}`);
       
       try {
         const responseJson = JSON.parse(content);
         
         if (responseJson.ok === true) {
-          console.log("[API] confirmReq успешно выполнен");
+          console.log("[FragmentAPI] Транзакция успешно подтверждена");
           
           // Добавляем задержку перед началом проверки статуса (возможно, серверу нужно время)
           await new Promise(resolve => setTimeout(resolve, 3000));
@@ -755,16 +758,16 @@ export class FragmentApiClient {
           return true;
         } else {
           if (responseJson.error) {
-            console.log(`[API] confirmReq ошибка: ${responseJson.error}`);
+            console.log(`[FragmentAPI] Ошибка подтверждения: ${responseJson.error}`);
           }
           return false;
         }
       } catch (ex) {
-        console.log(`[API] confirmReq ошибка разбора ответа: ${(ex as Error).message}`);
+        console.log(`[FragmentAPI] Ошибка разбора ответа: ${(ex as Error).message}`);
         return false;
       }
     } catch (ex) {
-      console.log(`[API] confirmReq ошибка запроса: ${(ex as Error).message}`);
+      console.log(`[FragmentAPI] Ошибка запроса: ${(ex as Error).message}`);
       return false;
     }
   }

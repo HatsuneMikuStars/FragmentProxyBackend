@@ -78,8 +78,6 @@ export class TonTransactionMonitor {
    */
   private async checkNewTransactions(): Promise<void> {
     try {
-      console.log('[TonTransactionMonitor] Проверка новых транзакций...');
-      
       // Получаем транзакции напрямую из WalletService
       const newTransactions = await this.walletService.getTransactions({
         limit: 20,
@@ -88,8 +86,6 @@ export class TonTransactionMonitor {
       
       if (newTransactions.length > 0) {
         console.log(`[TonTransactionMonitor] Найдено ${newTransactions.length} транзакций`);
-      } else {
-        console.log('[TonTransactionMonitor] Новых транзакций не найдено');
       }
       
       // Обрабатываем каждую новую транзакцию
@@ -100,7 +96,7 @@ export class TonTransactionMonitor {
       // Обновляем время последней проверки
       this.lastCheckTimestamp = Date.now();
     } catch (error) {
-      console.error(`[TonTransactionMonitor] Ошибка при проверке транзакций:`, error);
+      console.error(`[TonTransactionMonitor] Ошибка при проверке транзакций`);
     }
   }
   
@@ -115,7 +111,6 @@ export class TonTransactionMonitor {
       // Проверяем, не обрабатывали ли мы уже эту транзакцию
       const exists = await this.transactionRepository.exists(txHash);
       if (exists) {
-        console.log(`[TonTransactionMonitor] Транзакция ${txHash} уже обработана, пропускаем`);
         return false;
       }
       
@@ -130,7 +125,7 @@ export class TonTransactionMonitor {
       await this.processTransaction(tx);
       return true;
     } catch (error) {
-      console.error(`[TonTransactionMonitor] Ошибка при проверке транзакции ${txHash}:`, error);
+      console.error(`[TonTransactionMonitor] Ошибка при проверке транзакции ${txHash}`);
       return false;
     }
   }
@@ -143,24 +138,11 @@ export class TonTransactionMonitor {
       // Проверяем, не обрабатывали ли мы уже эту транзакцию
       const exists = await this.transactionRepository.exists(tx.id);
       if (exists) {
-        console.log(`[TonTransactionMonitor] Транзакция ${tx.id} уже обработана, пропускаем`);
         return;
       }
       
-      console.log(`[TonTransactionMonitor] Обработка транзакции: ${tx.id}`);
-      console.log(`[TonTransactionMonitor] Детали транзакции:
-        Hash: ${tx.id}
-        Amount: ${Number(tx.amount) / 1_000_000_000} TON
-        Timestamp: ${new Date(tx.timestamp).toISOString()}
-        From: ${tx.fromAddress || '<не указан>'}
-        To: ${tx.toAddress || '<не указан>'}
-        Comment: "${tx.comment || '<отсутствует>'}"
-      `);
-      
       // Если нет комментария, игнорируем транзакцию
       if (!tx.comment) {
-        console.log(`[TonTransactionMonitor] Транзакция ${tx.id} без комментария, игнорируем`);
-        console.log(`[TonTransactionMonitor] Сохраняем транзакцию в БД без username и starsAmount`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
           amount: Number(tx.amount) / 1_000_000_000,
@@ -172,12 +154,9 @@ export class TonTransactionMonitor {
       }
       
       // Извлекаем никнейм из комментария
-      console.log(`[TonTransactionMonitor] Пытаемся извлечь никнейм из комментария: "${tx.comment}"`);
       const username = this.extractUsernameFromComment(tx.comment);
       
       if (!username) {
-        console.log(`[TonTransactionMonitor] Не удалось извлечь никнейм из комментария: "${tx.comment}"`);
-        console.log(`[TonTransactionMonitor] Сохраняем транзакцию в БД без username и starsAmount`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
           amount: Number(tx.amount) / 1_000_000_000,
@@ -188,13 +167,12 @@ export class TonTransactionMonitor {
         return;
       }
       
-      console.log(`[TonTransactionMonitor] Успешно извлечен никнейм: @${username}`);
+      console.log(`[TonTransactionMonitor] Извлечен никнейм: @${username}`);
       
       // Если сумма меньше минимальной, игнорируем
       const amount = Number(tx.amount) / 1_000_000_000;
       if (amount < TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT) {
         console.log(`[TonTransactionMonitor] Сумма ${amount} TON меньше минимальной ${TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT} TON, игнорируем`);
-        console.log(`[TonTransactionMonitor] Сохраняем транзакцию в БД с username, но без starsAmount`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
           amount: amount,
@@ -207,11 +185,9 @@ export class TonTransactionMonitor {
       
       // Вычисляем количество звезд на основе полученной суммы
       const starsAmount = Math.floor(amount * TRANSACTION_MONITOR_CONFIG.STARS_PER_TON);
-      console.log(`[TonTransactionMonitor] Расчет количества звезд: ${amount} TON * ${TRANSACTION_MONITOR_CONFIG.STARS_PER_TON} = ${starsAmount} звезд`);
       
       if (starsAmount <= 0) {
         console.log(`[TonTransactionMonitor] Рассчитанное количество звезд ${starsAmount} <= 0, игнорируем`);
-        console.log(`[TonTransactionMonitor] Сохраняем транзакцию в БД с username, но без starsAmount`);
         await this.transactionRepository.saveTransaction({
           hash: tx.id,
           amount: amount,
@@ -225,7 +201,6 @@ export class TonTransactionMonitor {
       console.log(`[TonTransactionMonitor] Отправка ${starsAmount} звезд пользователю @${username} (получено ${amount} TON)`);
       
       // Сохраняем транзакцию в базу данных
-      console.log(`[TonTransactionMonitor] Сохраняем транзакцию в БД с username и starsAmount перед отправкой звезд`);
       await this.transactionRepository.saveTransaction({
         hash: tx.id,
         amount: amount,
@@ -236,9 +211,7 @@ export class TonTransactionMonitor {
       
       // Отправляем звезды через существующий сервис
       try {
-        console.log(`[TonTransactionMonitor] Вызываем метод purchaseStarsAsync для username=${username}, starsAmount=${starsAmount}`);
         const result = await this.starsPurchaseService.purchaseStarsAsync(username, starsAmount);
-        console.log(`[TonTransactionMonitor] Результат отправки звезд:`, result);
         
         // Обновляем информацию о транзакции в базе данных
         if (result.success) {
@@ -265,11 +238,10 @@ export class TonTransactionMonitor {
           false,
           errorMessage
         );
-        console.error(`[TonTransactionMonitor] Исключение при отправке звезд:`, error);
+        console.error(`[TonTransactionMonitor] Исключение при отправке звезд`);
       }
     } catch (error) {
-      console.error(`[TonTransactionMonitor] Ошибка при обработке транзакции ${tx.id}:`, error);
-      // Не будем пытаться сохранять транзакцию в случае ошибки обработки
+      console.error(`[TonTransactionMonitor] Ошибка при обработке транзакции ${tx.id}`);
     }
   }
   
@@ -277,34 +249,24 @@ export class TonTransactionMonitor {
    * Извлечение никнейма из комментария транзакции
    */
   private extractUsernameFromComment(comment: string): string | null {
-    console.log(`[TonTransactionMonitor] Извлечение никнейма из комментария: "${comment}"`);
-    
     // Удаляем лишние пробелы
     comment = comment.trim();
-    console.log(`[TonTransactionMonitor] После удаления пробелов: "${comment}"`);
     
     // Проверяем, начинается ли комментарий с @
     if (comment.startsWith('@')) {
       // Убираем @ в начале
       const username = comment.substring(1);
-      console.log(`[TonTransactionMonitor] Найден комментарий с @, извлечённый username: "${username}"`);
       
       // Проверяем, что никнейм соответствует правилам Telegram (5-32 символа, буквы, цифры и подчеркивания)
       const usernameRegex = /^[a-zA-Z0-9_]{5,32}$/;
       if (usernameRegex.test(username)) {
-        console.log(`[TonTransactionMonitor] Username "${username}" соответствует правилам Telegram`);
         return username;
-      } else {
-        console.log(`[TonTransactionMonitor] Username "${username}" НЕ соответствует правилам Telegram (должен быть 5-32 символа, буквы, цифры, подчеркивания)`);
       }
     } else {
       // Проверяем, может быть никнейм указан без @
       const usernameRegex = /^[a-zA-Z0-9_]{5,32}$/;
       if (usernameRegex.test(comment)) {
-        console.log(`[TonTransactionMonitor] Найден username без @: "${comment}"`);
         return comment;
-      } else {
-        console.log(`[TonTransactionMonitor] Комментарий "${comment}" не соответствует формату username Telegram`);
       }
     }
     

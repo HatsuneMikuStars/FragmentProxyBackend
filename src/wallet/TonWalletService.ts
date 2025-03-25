@@ -343,26 +343,25 @@ export class TonWalletService implements IWalletService {
         if (typeof value === 'bigint') {
           return value.toString() + 'n';
         }
+        // Не выводим значения Buffer в детальном виде
+        if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+          return `[Buffer length: ${value.data.length}]`;
+        }
         return value;
       }, space);
     };
     
-    console.log("🔍 Анализ тела сообщения:", typeof body);
-    
     try {
       // Способ 1: Стандартный для @ton/ton - комментарий в виде Cell с опкодом 0
       if (typeof body === 'object' && body !== null && typeof body.beginParse === 'function') {
-        console.log("📦 Анализ Cell объекта");
         const bodySlice = body.beginParse();
         
         if (bodySlice.remainingBits >= 32) {
           const op = bodySlice.loadUint(32);
-          console.log(`📑 Обнаружен опкод: ${op}`);
           
           if (op === 0) {
             // op = 0 означает текстовый комментарий
             const comment = bodySlice.loadStringTail();
-            console.log(`💬 Извлечен комментарий из Cell (опкод 0): "${comment}"`);
             return comment;
           }
         }
@@ -372,31 +371,26 @@ export class TonWalletService implements IWalletService {
       if (typeof body === 'object' && body !== null) {
         // Проверяем наличие decoded_body с полем text (как в ответе MCP)
         if (body.decoded_body && body.decoded_body.text) {
-          console.log(`💬 Извлечен комментарий из decoded_body.text: "${body.decoded_body.text}"`);
           return body.decoded_body.text;
         }
         
         // Проверяем наличие decoded_op_name "text_comment"
         if (body.decoded_op_name === 'text_comment' && body.decoded_body && body.decoded_body.text) {
-          console.log(`💬 Извлечен комментарий из text_comment: "${body.decoded_body.text}"`);
           return body.decoded_body.text;
         }
         
         // Проверяем наличие body с полем text
         if (body.body && body.body.text) {
-          console.log(`💬 Извлечен комментарий из body.text: "${body.body.text}"`);
           return body.body.text;
         }
         
         // Проверяем наличие текстового комментария в других форматах
         if (body.text && typeof body.text === 'string') {
-          console.log(`💬 Извлечен комментарий из поля text: "${body.text}"`);
           return body.text;
         }
         
         // Иногда комментарий может быть в свойстве comment
         if (body.comment && typeof body.comment === 'string') {
-          console.log(`💬 Извлечен комментарий из поля comment: "${body.comment}"`);
           return body.comment;
         }
         
@@ -406,7 +400,6 @@ export class TonWalletService implements IWalletService {
             // Пробуем декодировать base64 строку
             const decoded = Buffer.from(body.data, 'base64').toString('utf8');
             if (decoded && decoded.length > 0 && /^[\x00-\x7F]*$/.test(decoded)) {
-              console.log(`💬 Извлечен комментарий из data (base64): "${decoded}"`);
               return decoded;
             }
           } catch (e) {
@@ -420,9 +413,7 @@ export class TonWalletService implements IWalletService {
         try {
           const jsonBody = JSON.parse(body);
           if (jsonBody.text || jsonBody.comment || jsonBody.message) {
-            const comment = jsonBody.text || jsonBody.comment || jsonBody.message;
-            console.log(`💬 Извлечен комментарий из JSON строки: "${comment}"`);
-            return comment;
+            return jsonBody.text || jsonBody.comment || jsonBody.message;
           }
         } catch (e) {
           // Если парсинг JSON не удался, это не JSON
@@ -431,21 +422,13 @@ export class TonWalletService implements IWalletService {
       
       // Способ 4: Прямой текстовый комментарий
       if (typeof body === 'string' && body.length > 0) {
-        // Не выводим весь комментарий в лог, если он слишком длинный
-        const logComment = body.length > 50 ? body.substring(0, 47) + '...' : body;
-        console.log(`💬 Использован прямой текстовый комментарий: "${logComment}"`);
         return body;
       }
-      
-      // Если дошли до этого места, но комментарий не найден, выводим информацию для отладки
-      if (typeof body === 'object' && body !== null) {
-        console.log("⚠️ Комментарий не найден. Структура тела сообщения:", safeJsonStringify(body));
-      }
     } catch (err) {
-      console.warn("❌ Ошибка при извлечении комментария:", err);
+      // Не выводим полную ошибку
+      console.warn("Ошибка при извлечении комментария из сообщения");
     }
     
-    console.log("❌ Комментарий не найден");
     return undefined;
   }
   
@@ -544,7 +527,6 @@ export class TonWalletService implements IWalletService {
       
       // Извлекаем комментарий
       comment = this.extractCommentFromBody(inMessage.body);
-      console.log(`📥 Обработано входящее сообщение от: ${fromAddress}, сумма: ${amount}, комментарий: "${comment || 'нет'}"`);
     } 
     
     // Обработка исходящих сообщений
@@ -567,8 +549,6 @@ export class TonWalletService implements IWalletService {
     
     // Если есть исходящие сообщения, обрабатываем их
     if (outMessages.length > 0) {
-      console.log(`📤 Найдено ${outMessages.length} исходящих сообщений`);
-      
       // Обрабатываем первое исходящее сообщение (обычно основное для простых переводов)
       const firstOutMsg = outMessages[0];
       
@@ -587,7 +567,6 @@ export class TonWalletService implements IWalletService {
           
           // Извлекаем комментарий
           comment = this.extractCommentFromBody(firstOutMsg.body);
-          console.log(`📤 Обработано исходящее сообщение к: ${toAddress}, сумма: ${amount}, комментарий: "${comment || 'нет'}"`);
         }
       }
     }
@@ -610,7 +589,8 @@ export class TonWalletService implements IWalletService {
         hashString = String(tx.hash);
       }
     } catch (error) {
-      console.warn(`⚠️ Ошибка при преобразовании хеша: ${error}`);
+      // Уменьшаем детализацию ошибки
+      console.warn("Ошибка при преобразовании хеша транзакции");
       hashString = 'hash_error';
     }
     

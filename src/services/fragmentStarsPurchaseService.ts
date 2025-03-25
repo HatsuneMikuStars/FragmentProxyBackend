@@ -105,46 +105,32 @@ export class FragmentStarsPurchaseService {
    * @returns Результат операции покупки
    */
   public async purchaseStarsAsync(username: string, starsAmount: number): Promise<PurchaseResult> {
-    console.log(`Начинаем процесс покупки ${starsAmount} звезд для пользователя @${username}`);
+    console.log(`[Fragment] Покупка ${starsAmount} звезд для @${username}`);
 
     try {
       // Начальное получение состояния страницы покупки, как это происходит в браузере
-      console.log("Получение начального состояния страницы...");
       let currentDh = "";
       const initialState = await this._fragmentClient.updatePurchaseStateAsync("", "new", currentDh);
       if (initialState.ok && initialState.dh) {
         currentDh = initialState.dh;
-        console.log(`Получено начальное значение dh: ${currentDh}`);
       }
 
       // Ищем получателя
       const recipientId = await this.findRecipientIdAsync(username);
-      console.log(`ID получателя найден: ${recipientId}`);
 
       // Обновляем состояние после поиска получателя, как в браузере
-      console.log("Обновление состояния после поиска получателя...");
       const afterSearchState = await this._fragmentClient.updatePurchaseStateAsync("", "new", currentDh);
       if (afterSearchState.ok && afterSearchState.dh) {
         currentDh = afterSearchState.dh;
-        console.log(`Обновлено значение dh: ${currentDh}`);
       }
       
       // Инициализируем покупку
-      console.log("Инициализация покупки...");
       const initResult = await this._fragmentClient.initBuyStarsAsync(recipientId, starsAmount);
-      console.log("Покупка инициализирована:");
-      console.log(`- ReqId: ${initResult.reqId}`);
-      console.log(`- Amount: ${initResult.amount}`);
-      console.log(`- Button.Address: ${initResult.button.address}`);
-      console.log(`- Button.Amount: ${initResult.button.amount}`);
-      console.log(`- Button.Payload: ${initResult.button.payload}`);
       
       // Обновляем состояние после инициализации покупки
-      console.log("Обновление состояния после инициализации...");
       const afterInitState = await this._fragmentClient.updatePurchaseStateAsync(initResult.reqId, "new", currentDh);
       if (afterInitState.ok && afterInitState.dh) {
         currentDh = afterInitState.dh;
-        console.log(`Обновлено значение dh: ${currentDh}`);
       }
 
       // Получаем детали для транзакции
@@ -156,11 +142,9 @@ export class FragmentStarsPurchaseService {
       };
       
       // Обновляем состояние перед получением деталей транзакции
-      console.log("Обновление состояния перед получением деталей транзакции...");
       const beforeLinkState = await this._fragmentClient.updatePurchaseStateAsync(initResult.reqId, "new", currentDh);
       if (beforeLinkState.ok && beforeLinkState.dh) {
         currentDh = beforeLinkState.dh;
-        console.log(`Обновлено значение dh: ${currentDh}`);
       }
       
       const getLinkResponse = await this._fragmentClient.getBuyStarsLinkAsync(
@@ -178,63 +162,38 @@ export class FragmentStarsPurchaseService {
       const amountInTon = message.amount / 1_000_000_000; // Конвертация из нано-TON в TON
       
       // Обновляем состояние после получения деталей транзакции
-      console.log("Обновление состояния после получения деталей транзакции...");
       const afterLinkState = await this._fragmentClient.updatePurchaseStateAsync(initResult.reqId, "new", currentDh);
       if (afterLinkState.ok && afterLinkState.dh) {
         currentDh = afterLinkState.dh;
-        console.log(`Обновлено значение dh: ${currentDh}`);
       }
       
       // Формируем текст комментария для транзакции
       const comment = this.decodePayload(message.payload);
       
-      // Формируем инструкцию для вывода
-      const instructionMessage = 
-        `\n========== ИНСТРУКЦИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ ==========\n` +
-        `Ожидаю перевода транзакции от пользователя\n` +
-        `Вам надо перевести ${amountInTon} TON на адрес: ${message.address}\n` +
-        `Надо указать такое сообщение при транзакции: ${comment}\n` +
-        `После отправки транзакции программа автоматически продолжит работу\n` +
-        `================================================\n`;
-      
-      // Выводим инструкцию первый раз
-      console.log(instructionMessage);
-      console.log("АВТОМАТИЧЕСКОЕ ПРОДОЛЖЕНИЕ: Имитируем отправку транзакции пользователем...");
-      console.log("Продолжаем процесс без ожидания действий пользователя");
-      
       // Вместо ожидания пользовательского ввода, автоматически продолжаем выполнение
       const boc = message.payload;
-      console.log(`Используем payload сообщения: ${boc}`);
       
       // Обновляем состояние перед подтверждением транзакции
-      console.log("Обновление состояния перед подтверждением транзакции...");
       const beforeConfirmState = await this._fragmentClient.updatePurchaseStateAsync(initResult.reqId, "new", currentDh);
       if (beforeConfirmState.ok) {
         if (beforeConfirmState.dh) {
           currentDh = beforeConfirmState.dh;
         }
         
-        if (beforeConfirmState.mode) {
-          console.log(`Режим изменился на: ${beforeConfirmState.mode}`);
+        if (beforeConfirmState.mode && beforeConfirmState.mode !== "new") {
+          const modeChangeState = await this._fragmentClient.updatePurchaseStateAsync(
+            initResult.reqId, 
+            beforeConfirmState.mode, 
+            currentDh
+          );
           
-          // Если режим изменился, выполняем запрос с новым режимом
-          if (beforeConfirmState.mode !== "new") {
-            console.log(`Выполняем запрос с новым режимом: ${beforeConfirmState.mode}`);
-            const modeChangeState = await this._fragmentClient.updatePurchaseStateAsync(
-              initResult.reqId, 
-              beforeConfirmState.mode, 
-              currentDh
-            );
-            
-            if (modeChangeState.ok && modeChangeState.dh) {
-              currentDh = modeChangeState.dh;
-            }
+          if (modeChangeState.ok && modeChangeState.dh) {
+            currentDh = modeChangeState.dh;
           }
         }
       }
       
       // Переводим режим в processing и продолжаем проверку статуса
-      console.log("Принудительно переводим режим в processing...");
       const processingState = await this._fragmentClient.updatePurchaseStateAsync(
         initResult.reqId, 
         "processing", 
@@ -252,21 +211,11 @@ export class FragmentStarsPurchaseService {
         walletAccount
       );
       
-      if (confirmResult) {
-        console.log("Транзакция успешно подтверждена на Fragment");
-      } else {
-        console.log("Не удалось подтвердить транзакцию на Fragment, но продолжаем процесс");
-      }
-
       // Обновляем состояние после подтверждения транзакции
-      console.log("Обновление состояния после подтверждения транзакции...");
       const afterConfirmState = await this._fragmentClient.updatePurchaseStateAsync(initResult.reqId, "new", currentDh);
       if (afterConfirmState.ok) {
         if (afterConfirmState.dh) {
           currentDh = afterConfirmState.dh;
-        }
-        if (afterConfirmState.mode) {
-          console.log(`Режим изменился на: ${afterConfirmState.mode}`);
         }
       }
 
@@ -274,7 +223,7 @@ export class FragmentStarsPurchaseService {
       let txHash: string;
       
       if (this._walletService) {
-        console.log("Отправка реальной транзакции через кошелек TON...");
+        console.log(`[Fragment] Отправка ${amountInTon} TON для покупки ${starsAmount} звезд`);
         try {
           // Отправляем транзакцию через сервис кошелька
           const transactionResult = await this._walletService.sendTransaction({
@@ -294,34 +243,28 @@ export class FragmentStarsPurchaseService {
           }
           
           txHash = transactionResult.transactionHash;
-          console.log(`Транзакция успешно отправлена. Hash: ${txHash}`);
+          console.log(`[Fragment] Транзакция отправлена, хеш: ${txHash}`);
           
           // Ожидаем завершения транзакции (максимум 5 минут)
-          console.log("Ожидание подтверждения транзакции в блокчейне...");
           const transactionStatus = await this._walletService.waitForTransactionCompletion(
             txHash,
             5 * 60 * 1000 // 5 минут
           );
           
+          // Сокращаем информационные сообщения
           if (transactionStatus !== TransactionStatus.COMPLETED) {
-            console.warn(`Транзакция не подтверждена. Статус: ${transactionStatus}. Продолжаем процесс...`);
-          } else {
-            console.log("Транзакция успешно подтверждена в блокчейне!");
+            console.warn(`[Fragment] Транзакция не подтверждена. Статус: ${transactionStatus}`);
           }
         } catch (error) {
-          console.error("Ошибка при отправке реальной транзакции:", error);
+          console.error(`[Fragment] Ошибка при отправке транзакции`);
           throw new Error(`Ошибка при отправке TON: ${(error as Error).message}`);
         }
       } else {
         // Если сервис кошелька недоступен, используем симуляцию
-        console.log("ВНИМАНИЕ: Сервис кошелька не доступен. Используем симуляцию транзакции.");
+        console.log("[Fragment] Сервис кошелька недоступен, используется симуляция");
         txHash = "TON" + Date.now().toString(16).toUpperCase();
-        console.log(`Симуляция транзакции с хешем: ${txHash}`);
       }
 
-      // Запускаем постоянную проверку статуса со стандартными параметрами
-      console.log("Начинаем мониторинг статуса транзакции на Fragment...");
-      
       // Используем текущий режим и dh, полученные после подтверждения
       const startMode = afterConfirmState.ok && afterConfirmState.mode ? afterConfirmState.mode : "new";
       
@@ -329,8 +272,8 @@ export class FragmentStarsPurchaseService {
       this._fragmentClient.currentMode = startMode;
       this._fragmentClient.currentDh = currentDh;
       
-      console.log("Ожидаем обработку транзакции сервером Fragment...");
-      console.log("Программа будет работать до полного завершения транзакции без ограничения по времени");
+      // Объединяем несколько логов в один
+      console.log("[Fragment] Ожидание обработки транзакции...");
       
       const status = await this._fragmentClient.checkPurchaseStatusWithPollingAsync(
         initResult.reqId,
@@ -338,7 +281,7 @@ export class FragmentStarsPurchaseService {
         2000   // 2 секунды между попытками
       );
       
-      console.log(`Итоговый статус покупки: ${status.state}`);
+      console.log(`[Fragment] Покупка звезд завершена, статус: ${status.state}`);
       
       return {
         success: status.ok && status.state === PurchaseState.Completed,
@@ -350,7 +293,7 @@ export class FragmentStarsPurchaseService {
         error: status.error || undefined
       };
     } catch (error) {
-      console.log(`Ошибка при покупке звезд: ${(error as Error).message}`);
+      console.error(`[Fragment] Ошибка при покупке звезд: ${(error as Error).message}`);
       return {
         success: false,
         error: (error as Error).message
@@ -366,7 +309,6 @@ export class FragmentStarsPurchaseService {
   private decodePayload(payloadBase64: string): string {
     try {
       if (!payloadBase64) {
-        console.log("[DEBUG] Payload пустой или null");
         return "[ОШИБКА: Payload пустой]";
       }
       
@@ -388,7 +330,6 @@ export class FragmentStarsPurchaseService {
       
       // Проверяем длину массива
       if (bytes.length <= 17) {
-        console.log(`[DEBUG] Массив слишком короткий (${bytes.length} байт) для смещения на 17 байт`);
         return `[ОШИБКА: Данные слишком короткие (${bytes.length} байт)]`;
       }
       
@@ -397,7 +338,6 @@ export class FragmentStarsPurchaseService {
       const result = textDecoder.decode(bytes.slice(17));
       return result;
     } catch (error) {
-      console.log(`[DEBUG] Ошибка при декодировании payload: ${(error as Error).name}: ${(error as Error).message}`);
       return "[НЕ УДАЛОСЬ ДЕКОДИРОВАТЬ PAYLOAD: " + payloadBase64 + "]";
     }
   }

@@ -73,7 +73,6 @@ async function startServer() {
     console.log('[API] Запуск сервера и инициализация сервисов...');
     
     // Инициализация базы данных
-    console.log('[API] Подготовка базы данных...');
     await ensureDatabaseReady();
     
     // Создаем репозиторий транзакций
@@ -96,11 +95,11 @@ async function startServer() {
     
     // Получаем адрес кошелька
     const walletAddress = await tonWalletService.getWalletAddress();
-    console.log(`🔑 Адрес кошелька: ${walletAddress}`);
+    console.log(`[API] Адрес кошелька: ${walletAddress}`);
     
     // Получаем баланс кошелька
     const balance = await tonWalletService.getBalance();
-    console.log(`💰 Баланс кошелька: ${Number(balance) / 1_000_000_000} TON`);
+    console.log(`[API] Баланс кошелька: ${Number(balance) / 1_000_000_000} TON`);
     
     // Инициализация Fragment API клиента
     fragmentApiClient = new FragmentApiClient(
@@ -129,25 +128,19 @@ async function startServer() {
     if (TRANSACTION_MONITOR_CONFIG.AUTO_START) {
       transactionMonitor.start();
       isMonitoringRunning = true;
-      console.log('🔄 Мониторинг транзакций запущен автоматически');
     }
     
     // Запуск сервера
     app.listen(PORT, () => {
       console.log(`
-  🚀 Fragment Proxy API сервер запущен!
-  🌍 Сервер доступен по адресу: http://localhost:${PORT}
-  📝 Режим: ${ENV_CONFIG.IS_DEVELOPMENT ? 'Development' : 'Production'}
-  📚 Подробное логирование HTTP: ${ENV_CONFIG.VERBOSE_HTTP_LOGGING ? 'Включено' : 'Отключено'}
-  🔄 Мониторинг транзакций: ${isMonitoringRunning ? 'Включен' : 'Отключен'}
-  💱 Курс обмена: 1 TON = ${TRANSACTION_MONITOR_CONFIG.STARS_PER_TON} звезд
-  💵 Минимальная сумма: ${TRANSACTION_MONITOR_CONFIG.MIN_AMOUNT} TON
-  💾 База данных: SQLite (${process.env.DB_PATH || 'data/database.sqlite'})
+[API] Fragment Proxy API сервер запущен на порту ${PORT}
+[API] Режим: ${ENV_CONFIG.IS_DEVELOPMENT ? 'Development' : 'Production'}
+[API] Мониторинг транзакций: ${isMonitoringRunning ? 'Включен' : 'Отключен'}
       `);
     });
     
   } catch (error) {
-    console.error('❌ Ошибка при запуске сервера:', error);
+    console.error('[API] Ошибка при запуске сервера:', error);
     process.exit(1);
   }
 }
