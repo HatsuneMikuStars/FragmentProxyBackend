@@ -174,47 +174,51 @@ export class TonTransactionMonitor {
     const hash = tx.id;
     
     try {
-      // Проверяем, не обрабатывали ли мы уже эту транзакцию успешно
-      // Получаем транзакцию из базы данных, если она существует
+      // Проверяем, существует ли транзакция в базе данных
       const existingTransaction = await this.transactionRepository.findByHash(hash);
       
-      // Пропускаем только успешно обработанные транзакции
-      if (existingTransaction && existingTransaction.status === 'processed') {
-        console.log(`[Monitor] Скипуем уже обработанную транзакцию: ${hash}`);
-        return;
-      }
-      
-      // Пропускаем транзакции, которые уже обрабатываются другим процессом
-      if (existingTransaction && existingTransaction.status === 'processing') {
-        console.log(`[Monitor] Скипуем транзакцию в обработке: ${hash}`);
-        return;
-      }
-      
-      // Для транзакций со статусом 'failed' выполняем повторную обработку только если ошибка исправима
-      if (existingTransaction && existingTransaction.status === 'failed') {
-        // Список ошибок, при которых нет смысла повторять транзакцию
-        const nonRetryableErrors = [
-          "ERR_INVALID_USERNAME", 
-          "ERR_MISSING_COMMENT",
-          "ERR_STARS_BELOW_MINIMUM",
-          "ERR_STARS_ABOVE_MAXIMUM"
-        ];
-        
-        // Проверяем, является ли ошибка неисправимой
-        const errorMessage = existingTransaction.errorMessage || '';
-        const isNonRetryableError = nonRetryableErrors.some(err => errorMessage.includes(err));
-        
-        if (isNonRetryableError) {
-          console.log(`[Monitor] Скипуем проваленную транзакцию с неисправимой ошибкой: ${hash}, ошибка: ${errorMessage}`);
+      // Проверка статусов существующей транзакции
+      if (existingTransaction) {
+
+        if(existingTransaction.fragmentTransactionHash) {
+          console.log(`[Monitor] Транзакция ${hash} уже была обработана в Fragment`);
+          return;
+        }
+
+        // Если транзакция уже обработана или в процессе - пропускаем
+        if (existingTransaction.status === 'processed') {
+          console.log(`[Monitor] Скипуем уже обработанную транзакцию: ${hash}`);
           return;
         }
         
-        console.log(`[Monitor] Повторяем проваленную транзакцию с потенциально исправимой ошибкой: ${hash}, ошибка: ${errorMessage}`);
-      }
-      
-      // Пытаемся заблокировать транзакцию для обработки
-      // Если транзакция существует и уже имеет статус, попытаемся заблокировать её
-      if (existingTransaction) {
+        if (existingTransaction.status === 'processing') {
+          console.log(`[Monitor] Скипуем транзакцию в обработке: ${hash}`);
+          return;
+        }
+        
+        // Для транзакций со статусом 'failed' выполняем повторную обработку только если ошибка исправима
+        if (existingTransaction.status === 'failed') {
+          // Список ошибок, при которых нет смысла повторять транзакцию
+          const nonRetryableErrors = [
+            "ERR_INVALID_USERNAME", 
+            "ERR_MISSING_COMMENT",
+            "ERR_STARS_BELOW_MINIMUM",
+            "ERR_STARS_ABOVE_MAXIMUM"
+          ];
+          
+          // Проверяем, является ли ошибка неисправимой
+          const errorMessage = existingTransaction.errorMessage || '';
+          const isNonRetryableError = nonRetryableErrors.some(err => errorMessage.includes(err));
+          
+          if (isNonRetryableError) {
+            console.log(`[Monitor] Скипуем проваленную транзакцию с неисправимой ошибкой: ${hash}, ошибка: ${errorMessage}`);
+            return;
+          }
+          
+          console.log(`[Monitor] Повторяем проваленную транзакцию с потенциально исправимой ошибкой: ${hash}, ошибка: ${errorMessage}`);
+        }
+        
+        // Пытаемся заблокировать транзакцию для обработки
         const lockSuccessful = await this.transactionRepository.lockTransaction(hash);
         if (!lockSuccessful) {
           console.log(`[Monitor] Не удалось заблокировать транзакцию ${hash} для обработки`);
