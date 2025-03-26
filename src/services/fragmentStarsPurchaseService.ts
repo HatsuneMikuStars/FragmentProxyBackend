@@ -299,6 +299,7 @@ export class FragmentStarsPurchaseService {
       return {
         success: status.ok && status.state === PurchaseState.Completed,
         transactionHash: txHash,
+        outgoingTransactionHash: txHash,
         amount: initResult.amount,
         status: status.state,
         recipientId: recipientId,

@@ -280,7 +280,7 @@ export class FragmentApiClient {
     formData.append('method', 'updateStarsBuyState');
     
     // Логируем отправляемые данные
-    console.log(`[API] updatePurchaseState данные: ${formData.toString()}`);
+    // console.log(`[API] updatePurchaseState данные: ${formData.toString()}`);
     
     try {
       const response = await fetch(`${this._baseUrl}/api`, {
@@ -305,7 +305,7 @@ export class FragmentApiClient {
       }
       
       const content = await response.text();
-      console.log(`[API] updatePurchaseState ответ: ${content}`);
+      // console.log(`[API] updatePurchaseState ответ: ${content}`);
       
       // Анализируем ответ
       try {

@@ -9,7 +9,8 @@
     "prebuild": "yarn clean",
     "watch": "tsc -w",
     "start:api": "yarn build && node dist/server.js",
-    "dev:api": "ts-node-dev --respawn --transpile-only src/server.ts"
+    "dev:api": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "migration:run": "ts-node scripts/run-migration.ts"
   },
   "dependencies": {
     "@ton/core": "^0.60.1",

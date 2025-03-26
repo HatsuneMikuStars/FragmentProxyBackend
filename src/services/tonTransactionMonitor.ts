@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { TRANSACTION_MONITOR_CONFIG } from '../config';
 import { WalletTransaction } from '../wallet/models/walletModels';
+import { TransactionType } from '../wallet/models/walletModels';
 
 /**
  * Сервис для мониторинга транзакций TON и автоматической покупки звезд
@@ -81,7 +82,8 @@ export class TonTransactionMonitor {
       // Получаем транзакции напрямую из WalletService
       const newTransactions = await this.walletService.getTransactions({
         limit: 20,
-        archival: true // Используем архивные ноды для полной истории
+        archival: true, // Используем архивные ноды для полной истории
+        type: TransactionType.INCOMING // Только входящие транзакции
       });
       
       if (newTransactions.length > 0) {
@@ -109,8 +111,17 @@ export class TonTransactionMonitor {
       console.log(`[Monitor] Checking transaction by hash: ${txHash}`);
       
       // Проверяем, не обрабатывали ли мы уже эту транзакцию
-      const exists = await this.transactionRepository.exists(txHash);
-      if (exists) {
+      const existingTx = await this.transactionRepository.findByHash(txHash);
+      
+      // Если транзакция уже существует и успешно обработана, пропускаем её
+      if (existingTx && existingTx.status === 'processed') {
+        console.log(`[Monitor] Транзакция ${txHash} уже обработана успешно, повторная обработка не требуется`);
+        return false;
+      }
+      
+      // Если транзакция уже существует и в процессе обработки, пропускаем её
+      if (existingTx && existingTx.status === 'processing') {
+        console.log(`[Monitor] Транзакция ${txHash} уже обрабатывается другим процессом`);
         return false;
       }
       
@@ -118,6 +129,16 @@ export class TonTransactionMonitor {
       const tx = await this.walletService.getTransactionByHash(txHash);
       if (!tx) {
         console.log(`[Monitor] Transaction with hash ${txHash} not found`);
+        
+        // Если транзакция существует в нашей БД, но не найдена в блокчейне,
+        // отмечаем её как failed
+        if (existingTx) {
+          await this.transactionRepository.unlockTransaction(
+            txHash, 
+            "ERR_NOT_FOUND: Транзакция не найдена в блокчейне"
+          );
+        }
+        
         return false;
       }
       
@@ -125,7 +146,22 @@ export class TonTransactionMonitor {
       await this.processTransaction(tx);
       return true;
     } catch (error) {
-      console.error(`[Monitor] Error checking transaction ${txHash}`);
+      const errorMessage = (error as Error).message;
+      console.error(`[Monitor] Error checking transaction ${txHash}: ${errorMessage}`);
+      
+      // Если произошла ошибка и транзакция существует, разблокируем её
+      try {
+        const existingTx = await this.transactionRepository.findByHash(txHash);
+        if (existingTx && existingTx.status === 'processing') {
+          await this.transactionRepository.unlockTransaction(
+            txHash, 
+            `ERR_CHECK_FAILED: Ошибка при проверке транзакции: ${errorMessage}`
+          );
+        }
+      } catch (unlockError) {
+        console.error(`[Monitor] Failed to unlock transaction ${txHash}: ${(unlockError as Error).message}`);
+      }
+      
       return false;
     }
   }
@@ -134,14 +170,23 @@ export class TonTransactionMonitor {
    * Обработка транзакции
    */
   private async processTransaction(tx: WalletTransaction): Promise<void> {
+    // Хеш транзакции для удобства использования в логах
+    const hash = tx.id;
+    
     try {
       // Проверяем, не обрабатывали ли мы уже эту транзакцию успешно
       // Получаем транзакцию из базы данных, если она существует
-      const existingTransaction = await this.transactionRepository.findByHash(tx.id);
+      const existingTransaction = await this.transactionRepository.findByHash(hash);
       
       // Пропускаем только успешно обработанные транзакции
       if (existingTransaction && existingTransaction.status === 'processed') {
-        console.log(`[Monitor] Скипуем уже обработанную транзакцию: ${tx.id}`);
+        console.log(`[Monitor] Скипуем уже обработанную транзакцию: ${hash}`);
+        return;
+      }
+      
+      // Пропускаем транзакции, которые уже обрабатываются другим процессом
+      if (existingTransaction && existingTransaction.status === 'processing') {
+        console.log(`[Monitor] Скипуем транзакцию в обработке: ${hash}`);
         return;
       }
       
@@ -160,176 +205,239 @@ export class TonTransactionMonitor {
         const isNonRetryableError = nonRetryableErrors.some(err => errorMessage.includes(err));
         
         if (isNonRetryableError) {
-          console.log(`[Monitor] Скипуем проваленную транзакцию с неисправимой ошибкой: ${tx.id}, ошибка: ${errorMessage}`);
+          console.log(`[Monitor] Скипуем проваленную транзакцию с неисправимой ошибкой: ${hash}, ошибка: ${errorMessage}`);
           return;
         }
         
-        console.log(`[Monitor] Повторяем проваленную транзакцию с потенциально исправимой ошибкой: ${tx.id}, ошибка: ${errorMessage}`);
+        console.log(`[Monitor] Повторяем проваленную транзакцию с потенциально исправимой ошибкой: ${hash}, ошибка: ${errorMessage}`);
       }
       
-      if (!tx.comment) {
-        console.log(`[Monitor] Скипуем транзакцию без комментария: ${tx.id}, сумма: ${Number(tx.amount) / 1_000_000_000} TON, отправитель: ${tx.fromAddress || 'неизвестен'}`);
+      // Пытаемся заблокировать транзакцию для обработки
+      // Если транзакция существует и уже имеет статус, попытаемся заблокировать её
+      if (existingTransaction) {
+        const lockSuccessful = await this.transactionRepository.lockTransaction(hash);
+        if (!lockSuccessful) {
+          console.log(`[Monitor] Не удалось заблокировать транзакцию ${hash} для обработки`);
+          return;
+        }
+        console.log(`[Monitor] Транзакция ${hash} успешно заблокирована для обработки`);
+      }
+      
+      // Используем блок try-finally для гарантированной разблокировки транзакции в случае ошибки
+      try {
+        if (!tx.comment) {
+          console.log(`[Monitor] Скипуем транзакцию без комментария: ${hash}, сумма: ${Number(tx.amount) / 1_000_000_000} TON, отправитель: ${tx.fromAddress || 'неизвестен'}`);
+          
+          // Сохраняем информацию о пропущенной транзакции
+          await this.transactionRepository.saveTransaction({
+            hash: hash,
+            amount: Number(tx.amount) / 1_000_000_000, // Преобразуем bigint в number и конвертируем из нано в TON
+            timestamp: tx.timestamp,
+            senderAddress: tx.fromAddress || '',
+            status: "failed",
+            statusMsg: "ERR_MISSING_COMMENT: Транзакция не содержит комментарий с именем пользователя"
+          });
+          
+          // Если транзакция была заблокирована, разблокируем её с ошибкой
+          if (existingTransaction) {
+            await this.transactionRepository.unlockTransaction(hash, "ERR_MISSING_COMMENT: Транзакция не содержит комментарий с именем пользователя");
+          }
+          return;
+        }
         
-        // Сохраняем информацию о пропущенной транзакции
-        await this.transactionRepository.saveTransaction({
-          hash: tx.id,
-          amount: Number(tx.amount) / 1_000_000_000, // Преобразуем bigint в number и конвертируем из нано в TON
-          timestamp: tx.timestamp,
-          senderAddress: tx.fromAddress || '',
-          status: "failed",
-          statusMsg: "ERR_MISSING_COMMENT: Транзакция не содержит комментарий с именем пользователя"
-        });
-        return;
-      }
-      
-      const username = this.extractUsernameFromComment(tx.comment);
-      if (!username) {
-        console.log(`[Monitor] Некорректное или отсутствующее имя пользователя в комментарии: "${tx.comment}" для транзакции: ${tx.id}`);
+        const username = this.extractUsernameFromComment(tx.comment);
+        if (!username) {
+          console.log(`[Monitor] Некорректное или отсутствующее имя пользователя в комментарии: "${tx.comment}" для транзакции: ${hash}`);
+          
+          // Сохраняем информацию о пропущенной транзакции
+          await this.transactionRepository.saveTransaction({
+            hash: hash,
+            amount: Number(tx.amount) / 1_000_000_000, // Преобразуем bigint в number и конвертируем из нано в TON
+            timestamp: tx.timestamp,
+            comment: tx.comment,
+            senderAddress: tx.fromAddress || '',
+            status: "failed",
+            statusMsg: `ERR_INVALID_USERNAME: Некорректное имя пользователя в комментарии: "${tx.comment}"`
+          });
+          
+          // Если транзакция была заблокирована, разблокируем её с ошибкой
+          if (existingTransaction) {
+            await this.transactionRepository.unlockTransaction(hash, `ERR_INVALID_USERNAME: Некорректное имя пользователя в комментарии: "${tx.comment}"`);
+          }
+          return;
+        }
         
-        // Сохраняем информацию о пропущенной транзакции
-        await this.transactionRepository.saveTransaction({
-          hash: tx.id,
-          amount: Number(tx.amount) / 1_000_000_000, // Преобразуем bigint в number и конвертируем из нано в TON
-          timestamp: tx.timestamp,
-          comment: tx.comment,
-          senderAddress: tx.fromAddress || '',
-          status: "failed",
-          statusMsg: `ERR_INVALID_USERNAME: Некорректное имя пользователя в комментарии: "${tx.comment}"`
-        });
-        return;
-      }
-      
-      // Получаем текущий курс обмена TON на звезды
-      const starsPerTon = await this.starsPurchaseService.getStarsExchangeRate();
-      
-      // Рассчитываем комиссию за газ и сумму после вычета газа
-      const originalAmount = Number(tx.amount) / 1_000_000_000; // Преобразуем из нано TON в TON
-      const gasFee = tx.fee ? Number(tx.fee) / 1_000_000_000 : 0; // Преобразуем комиссию из нано TON в TON
-      const amountAfterGas = Math.max(0, originalAmount - gasFee);
-      
-      // Рассчитываем количество звезд для покупки (без дробной части)
-      const starsAmount = Math.floor(amountAfterGas * starsPerTon);
-      
-      // Проверяем, что количество звезд превышает минимальный порог
-      if (starsAmount < TRANSACTION_MONITOR_CONFIG.MIN_STARS) {
-        console.log(`[Monitor] Stars amount (${starsAmount}) is less than minimum threshold (${TRANSACTION_MONITOR_CONFIG.MIN_STARS}) for transaction: ${tx.id}`);
+        // Получаем текущий курс обмена TON на звезды
+        const starsPerTon = await this.starsPurchaseService.getStarsExchangeRate();
         
-        // Сохраняем информацию о пропущенной транзакции с детальным кодом ошибки
-        await this.transactionRepository.saveTransaction({
-          hash: tx.id,
-          amount: originalAmount,
-          timestamp: tx.timestamp,
-          comment: tx.comment,
-          senderAddress: tx.fromAddress || '',
-          status: "failed",
-          gasFee,
-          amountAfterGas,
-          exchangeRate: starsPerTon,
-          statusMsg: `ERR_STARS_BELOW_MINIMUM: Количество звезд (${starsAmount}) меньше минимального порога (${TRANSACTION_MONITOR_CONFIG.MIN_STARS})`
-        }, username, starsAmount);
-        return;
-      }
-      
-      // Проверяем, что количество звезд не превышает максимальный лимит
-      if (starsAmount > TRANSACTION_MONITOR_CONFIG.MAX_STARS) {
-        console.log(`[Monitor] Stars amount (${starsAmount}) exceeds maximum limit (${TRANSACTION_MONITOR_CONFIG.MAX_STARS}) for transaction: ${tx.id}`);
+        // Рассчитываем комиссию за газ и сумму после вычета газа
+        const originalAmount = Number(tx.amount) / 1_000_000_000; // Преобразуем из нано TON в TON
+        const gasFee = tx.fee ? Number(tx.fee) / 1_000_000_000 : 0; // Преобразуем комиссию из нано TON в TON
+        const amountAfterGas = Math.max(0, originalAmount - gasFee);
         
-        // Сохраняем информацию о пропущенной транзакции с детальным кодом ошибки
-        await this.transactionRepository.saveTransaction({
-          hash: tx.id,
-          amount: originalAmount,
-          timestamp: tx.timestamp,
-          comment: tx.comment,
-          senderAddress: tx.fromAddress || '',
-          status: "failed",
-          gasFee,
-          amountAfterGas,
-          exchangeRate: starsPerTon,
-          statusMsg: `ERR_STARS_ABOVE_MAXIMUM: Количество звезд (${starsAmount}) превышает максимальный лимит (${TRANSACTION_MONITOR_CONFIG.MAX_STARS})`
-        }, username, starsAmount);
-        return;
-      }
-      
-      console.log(`[Monitor] Processing transaction:
-  - Hash: ${tx.id}
+        // Рассчитываем количество звезд для покупки (без дробной части)
+        const starsAmount = Math.floor(amountAfterGas * starsPerTon);
+        
+        // Проверяем, что количество звезд превышает минимальный порог
+        if (starsAmount < TRANSACTION_MONITOR_CONFIG.MIN_STARS) {
+          console.log(`[Monitor] Stars amount (${starsAmount}) is less than minimum threshold (${TRANSACTION_MONITOR_CONFIG.MIN_STARS}) for transaction: ${hash}`);
+          
+          // Сохраняем информацию о пропущенной транзакции с детальным кодом ошибки
+          const errorMsg = `ERR_STARS_BELOW_MINIMUM: Количество звезд (${starsAmount}) меньше минимального порога (${TRANSACTION_MONITOR_CONFIG.MIN_STARS})`;
+          
+          await this.transactionRepository.saveTransaction({
+            hash: hash,
+            amount: originalAmount,
+            timestamp: tx.timestamp,
+            comment: tx.comment,
+            senderAddress: tx.fromAddress || '',
+            status: "failed",
+            gasFee,
+            amountAfterGas,
+            exchangeRate: starsPerTon,
+            statusMsg: errorMsg
+          }, username, starsAmount);
+          
+          // Если транзакция была заблокирована, разблокируем её с ошибкой
+          if (existingTransaction) {
+            await this.transactionRepository.unlockTransaction(hash, errorMsg);
+          }
+          return;
+        }
+        
+        // Проверяем, что количество звезд не превышает максимальный лимит
+        if (starsAmount > TRANSACTION_MONITOR_CONFIG.MAX_STARS) {
+          console.log(`[Monitor] Stars amount (${starsAmount}) exceeds maximum limit (${TRANSACTION_MONITOR_CONFIG.MAX_STARS}) for transaction: ${hash}`);
+          
+          // Сохраняем информацию о пропущенной транзакции с детальным кодом ошибки
+          const errorMsg = `ERR_STARS_ABOVE_MAXIMUM: Количество звезд (${starsAmount}) превышает максимальный лимит (${TRANSACTION_MONITOR_CONFIG.MAX_STARS})`;
+          
+          await this.transactionRepository.saveTransaction({
+            hash: hash,
+            amount: originalAmount,
+            timestamp: tx.timestamp,
+            comment: tx.comment,
+            senderAddress: tx.fromAddress || '',
+            status: "failed",
+            gasFee,
+            amountAfterGas,
+            exchangeRate: starsPerTon,
+            statusMsg: errorMsg
+          }, username, starsAmount);
+          
+          // Если транзакция была заблокирована, разблокируем её с ошибкой
+          if (existingTransaction) {
+            await this.transactionRepository.unlockTransaction(hash, errorMsg);
+          }
+          return;
+        }
+        
+        console.log(`[Monitor] Processing transaction:
+  - Hash: ${hash}
   - User: @${username}
   - Original amount: ${originalAmount.toFixed(9)} TON
   - Gas fee: ${gasFee.toFixed(9)} TON (${(gasFee/originalAmount*100).toFixed(2)}% of transaction)
   - Amount after gas: ${amountAfterGas.toFixed(9)} TON
   - Stars to purchase: ${starsAmount} (rate: ${starsPerTon.toFixed(2)} stars/TON)`);
-      
-      // Сохраняем транзакцию в базу данных
-      await this.transactionRepository.saveTransaction({
-        hash: tx.id,
-        amount: originalAmount,
-        timestamp: tx.timestamp,
-        comment: tx.comment,
-        senderAddress: tx.fromAddress || '',
-        gasFee,
-        amountAfterGas,
-        exchangeRate: starsPerTon,
-        status: "pending"
-      }, username, starsAmount);
-      
-      // Отправляем звезды через существующий сервис
-      try {
-        console.log(`[Monitor] Начинаем покупку ${starsAmount} звезд для пользователя @${username}`);
-        const result = await this.starsPurchaseService.purchaseStarsAsync(username, starsAmount);
         
-        // Обновляем информацию о транзакции в базе данных
-        if (result.success) {
-          await this.transactionRepository.updateTransactionAfterStarsPurchase(
-            tx.id,
-            result.transactionHash || "",
-            true
-          );
-          console.log(`[Monitor] УСПЕШНО отправлено ${starsAmount} звезд пользователю @${username}, хеш транзакции: ${result.transactionHash}`);
-        } else {
-          // Детализированное сообщение об ошибке с кодом категории
-          const errorType = this.categorizeError(result.error || "Неизвестная ошибка");
-          const errorCode = `ERR_${errorType}`;
-          const errorMsg = `${errorCode}: ${result.error || "Неизвестная ошибка"}`;
-          console.error(`[Monitor] ОШИБКА: ${errorMsg}`);
-          
-          await this.transactionRepository.updateTransactionAfterStarsPurchase(
-            tx.id,
-            result.transactionHash || "",
-            false,
-            errorMsg
-          );
+        // Если это новая транзакция, сохраняем её со статусом processing
+        if (!existingTransaction) {
+          await this.transactionRepository.saveTransaction({
+            hash: hash,
+            amount: originalAmount,
+            timestamp: tx.timestamp,
+            comment: tx.comment,
+            senderAddress: tx.fromAddress || '',
+            gasFee,
+            amountAfterGas,
+            exchangeRate: starsPerTon,
+            status: "processing" // Сразу устанавливаем статус "processing"
+          }, username, starsAmount);
+          console.log(`[Monitor] Новая транзакция ${hash} создана и заблокирована для обработки`);
         }
-      } catch (error) {
-        const errorMessage = (error as Error).message;
-        const errorType = this.categorizeError(errorMessage);
-        const errorCode = `ERR_${errorType}`;
-        const detailedError = `${errorCode}: ${errorMessage}`;
-        console.error(`[Monitor] КРИТИЧЕСКАЯ ОШИБКА при отправке звезд: ${detailedError}`);
         
-        await this.transactionRepository.updateTransactionAfterStarsPurchase(
-          tx.id,
-          "",
-          false,
-          detailedError
-        );
+        // Отправляем звезды через существующий сервис
+        try {
+          console.log(`[Monitor] Начинаем покупку ${starsAmount} звезд для пользователя @${username}`);
+          const result = await this.starsPurchaseService.purchaseStarsAsync(username, starsAmount);
+          
+          // Обновляем информацию о транзакции в базе данных
+          if (result.success) {
+            await this.transactionRepository.updateTransactionAfterStarsPurchase(
+              hash,
+              result.outgoingTransactionHash || "",
+              result.transactionHash || "",
+              true
+            );
+            console.log(`[Monitor] УСПЕШНО отправлено ${starsAmount} звезд пользователю @${username}, хеш транзакции: ${result.transactionHash}`);
+          } else {
+            // Детализированное сообщение об ошибке с кодом категории
+            const errorType = this.categorizeError(result.error || "Неизвестная ошибка");
+            const errorCode = `ERR_${errorType}`;
+            const errorMsg = `${errorCode}: ${result.error || "Неизвестная ошибка"}`;
+            console.error(`[Monitor] ОШИБКА: ${errorMsg}`);
+            
+            await this.transactionRepository.updateTransactionAfterStarsPurchase(
+              hash,
+              result.outgoingTransactionHash || "",
+              result.transactionHash || "",
+              false,
+              errorMsg
+            );
+          }
+        } catch (error) {
+          const errorMessage = (error as Error).message;
+          const errorType = this.categorizeError(errorMessage);
+          const errorCode = `ERR_${errorType}`;
+          const detailedError = `${errorCode}: ${errorMessage}`;
+          console.error(`[Monitor] КРИТИЧЕСКАЯ ОШИБКА при отправке звезд: ${detailedError}`);
+          
+          // Если транзакция была заблокирована или создана со статусом processing,
+          // разблокируем её с ошибкой (это обновит статус на failed)
+          await this.transactionRepository.unlockTransaction(hash, detailedError);
+        }
+      } finally {
+        // В блоке finally гарантируем разблокировку транзакции в случае непредвиденных ошибок
+        // Это важно для обеспечения отказоустойчивости системы
+        if (existingTransaction) {
+          // Проверяем текущий статус транзакции
+          const currentTx = await this.transactionRepository.findByHash(hash);
+          
+          // Если транзакция все еще имеет статус 'processing', значит что-то пошло не так
+          // и нужно разблокировать её
+          if (currentTx && currentTx.status === 'processing') {
+            console.log(`[Monitor] Принудительная разблокировка транзакции ${hash} в блоке finally`);
+            await this.transactionRepository.unlockTransaction(hash);
+          }
+        }
       }
     } catch (error) {
       const errorMessage = (error as Error).message;
       const errorType = this.categorizeError(errorMessage);
       const errorCode = `ERR_${errorType}`;
       const detailedError = `${errorCode}: ${errorMessage}`;
-      console.error(`[Monitor] НЕПРЕДВИДЕННАЯ ОШИБКА при обработке транзакции ${tx.id}: ${detailedError}`);
-      
+      console.error(`[Monitor] НЕПРЕДВИДЕННАЯ ОШИБКА при обработке транзакции ${hash}: ${detailedError}`);
+       
       // Пытаемся сохранить информацию об ошибке в базу данных
       try {
-        await this.transactionRepository.saveTransaction({
-          hash: tx.id,
-          amount: Number(tx.amount) / 1_000_000_000, // Преобразуем bigint в number и конвертируем из нано в TON
-          timestamp: tx.timestamp,
-          comment: tx.comment || "",
-          senderAddress: tx.fromAddress || '',
-          status: "failed",
-          statusMsg: detailedError
-        });
+        // Проверяем, существует ли транзакция
+        const existingTx = await this.transactionRepository.findByHash(hash);
+        
+        if (existingTx) {
+          // Если транзакция существует, разблокируем её с ошибкой
+          await this.transactionRepository.unlockTransaction(hash, detailedError);
+        } else {
+          // Если транзакции не существует, создаем новую с ошибкой
+          await this.transactionRepository.saveTransaction({
+            hash: hash,
+            amount: Number(tx.amount) / 1_000_000_000, // Преобразуем bigint в number и конвертируем из нано в TON
+            timestamp: tx.timestamp,
+            comment: tx.comment || "",
+            senderAddress: tx.fromAddress || '',
+            status: "failed",
+            statusMsg: detailedError
+          });
+        }
       } catch (dbError) {
         console.error(`[Monitor] Не удалось сохранить информацию об ошибке в базу: ${(dbError as Error).message}`);
       }

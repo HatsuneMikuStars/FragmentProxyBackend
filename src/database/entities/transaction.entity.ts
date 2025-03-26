@@ -62,6 +62,12 @@ export class Transaction {
   starsAmount: number | null;
 
   /**
+   * Хеш исходящей TON транзакции на адрес Fragment
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  outgoingTransactionHash: string | null;
+
+  /**
    * Хеш транзакции в Fragment
    */
   @Column({ type: 'varchar', length: 64, nullable: true })
@@ -76,7 +82,7 @@ export class Transaction {
     default: 'processed'
   })
   @Index()
-  status: 'processed' | 'pending' | 'failed';
+  status: 'processed' | 'processing' | 'pending' | 'failed';
 
   /**
    * Сообщение об ошибке, если транзакция завершилась с ошибкой
