@@ -441,6 +441,8 @@ export class TonWalletService implements IWalletService {
       const hash = params.hash;
       const to_lt = params.to_lt;
       const archival = params.archival || false;
+      // Получаем тип из параметров
+      const type = params.type;
       
       // Получаем транзакции с архивного сервера, если нужно
       const transactions = await this.client.getTransactions(address, {
@@ -452,7 +454,14 @@ export class TonWalletService implements IWalletService {
       });
       
       // Преобразуем транзакции в наш формат
-      return transactions.map(tx => this.convertTonTransaction(tx));
+      let result = transactions.map(tx => this.convertTonTransaction(tx));
+      
+      // После маппинга транзакций добавляем фильтрацию
+      if (type) {
+        result = result.filter(tx => tx.type === type);
+      }
+      
+      return result;
     } catch (error) {
       console.error('Ошибка при получении транзакций:', error);
       throw new Error('Не удалось получить список транзакций');

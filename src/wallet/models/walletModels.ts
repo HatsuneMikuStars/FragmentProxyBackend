@@ -144,6 +144,11 @@ export interface GetTransactionsParams {
    * (по умолчанию false)
    */
   archival?: boolean;
+
+  /**
+   * Тип транзакций для фильтрации (входящие/исходящие)
+   */
+  type?: TransactionType;
 }
 
 /**
