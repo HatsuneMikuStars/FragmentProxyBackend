@@ -185,15 +185,35 @@ export class TonTransactionMonitor {
           return;
         }
 
-        // Если транзакция уже обработана или в процессе - пропускаем
+        // Если транзакция уже обработана - пропускаем
         if (existingTransaction.status === 'processed') {
           console.log(`[Monitor] Скипуем уже обработанную транзакцию: ${hash}`);
           return;
         }
         
+        // Проверяем зависшие транзакции в статусе processing
         if (existingTransaction.status === 'processing') {
-          console.log(`[Monitor] Скипуем транзакцию в обработке: ${hash}`);
-          return;
+          // Проверяем время последнего обновления транзакции
+          const now = new Date();
+          const updatedAt = existingTransaction.updatedAt;
+          const timeInProcessing = now.getTime() - updatedAt.getTime();
+          
+          // Если транзакция "зависла" в processing дольше заданного времени
+          if (timeInProcessing > TRANSACTION_MONITOR_CONFIG.PROCESSING_TIMEOUT_MS) {
+            console.log(`[Monitor] Транзакция ${hash} зависла в состоянии processing на ${(timeInProcessing / (60 * 1000)).toFixed(1)} минут, пробуем обработать повторно`);
+            
+            // Пытаемся разблокировать транзакцию с ошибкой тайм-аута
+            await this.transactionRepository.unlockTransaction(
+              hash, 
+              `ERR_PROCESSING_TIMEOUT: Транзакция зависла в статусе processing на ${(timeInProcessing / (60 * 1000)).toFixed(1)} минут`
+            );
+            
+            // Можно сразу продолжить обработку или вернуться, чтобы транзакция была обработана в следующем цикле
+            // Выбираем продолжить, чтобы сразу обработать
+          } else {
+            console.log(`[Monitor] Скипуем транзакцию в обработке: ${hash} (${(timeInProcessing / (60 * 1000)).toFixed(1)} минут в статусе processing)`);
+            return;
+          }
         }
         
         // Для транзакций со статусом 'failed' выполняем повторную обработку только если ошибка исправима
@@ -513,10 +533,11 @@ export class TonTransactionMonitor {
   }
   
   /**
-   * Получение всех ожидающих обработки транзакций
+   * Получение транзакций с исправимыми ошибками, которые можно повторно обработать
+   * Заменяет предыдущий метод getPendingTransactions
    */
-  public async getPendingTransactions(page: number = 1, limit: number = 20): Promise<any> {
-    return await this.transactionRepository.getTransactionsByStatus('pending', page, limit);
+  public async getRetryableFailedTransactions(page: number = 1, limit: number = 20): Promise<any> {
+    return await this.transactionRepository.getRetryableFailedTransactions(page, limit);
   }
   
   /**
@@ -531,5 +552,12 @@ export class TonTransactionMonitor {
    */
   public async getTransactionStats(): Promise<any> {
     return await this.transactionRepository.getTransactionStats();
+  }
+  
+  /**
+   * Получение истории конкретной транзакции
+   */
+  public async getTransactionHistory(hash: string): Promise<any> {
+    return await this.transactionRepository.getTransactionHistory(hash);
   }
 } 

@@ -1,5 +1,6 @@
 import { Repository, DataSource } from 'typeorm';
 import { Transaction } from '../entities/transaction.entity';
+import { TransactionHistoryRepository, TransactionActions } from './transaction-history.repository';
 
 /**
  * Локальный интерфейс для транзакций TON, заменяет TonTransaction из apiClient
@@ -13,7 +14,7 @@ interface TonTransactionData {
   gasFee?: number;               // Комиссия за газ
   amountAfterGas?: number;       // Сумма после вычета газа
   exchangeRate?: number;         // Курс обмена TON -> звезды на момент транзакции
-  status?: 'pending' | 'processing' | 'processed' | 'failed';  // Статус обработки
+  status?: 'processing' | 'processed' | 'failed';  // Статус обработки
   statusMsg?: string;            // Дополнительное сообщение о статусе
 }
 
@@ -22,9 +23,11 @@ interface TonTransactionData {
  */
 export class TransactionRepository {
   private repository: Repository<Transaction>;
+  private historyRepository: TransactionHistoryRepository;
 
   constructor(private dataSource: DataSource) {
     this.repository = dataSource.getRepository(Transaction);
+    this.historyRepository = new TransactionHistoryRepository(dataSource);
   }
 
   /**
@@ -95,6 +98,8 @@ export class TransactionRepository {
     }
     
     try {
+      const previousStatus = tx.status;
+      
       // Атомарно обновляем статус на 'processing'
       await this.repository.update(
         { hash, status: tx.status }, // обновляем только если статус не изменился
@@ -107,6 +112,15 @@ export class TransactionRepository {
       
       if (lockSuccessful) {
         console.log(`[TransactionRepo] Транзакция ${hash} успешно заблокирована для обработки`);
+        
+        // Добавляем запись в историю
+        await this.historyRepository.addHistoryRecord(
+          hash,
+          TransactionActions.LOCKED,
+          'processing',
+          previousStatus,
+          `Транзакция заблокирована для обработки`
+        );
       } else {
         console.log(`[TransactionRepo] Не удалось заблокировать транзакцию ${hash}, возможно она была заблокирована другим процессом`);
       }
@@ -129,18 +143,30 @@ export class TransactionRepository {
       const tx = await this.findByHash(hash);
       if (!tx) return false;
       
-      // Устанавливаем статус обратно в 'pending' или 'failed' в зависимости от наличия ошибки
-      const newStatus = errorMessage ? 'failed' : 'pending';
+      // Всегда устанавливаем статус 'failed' при разблокировке
+      // Если сообщение об ошибке не указано, используем стандартное
+      const finalErrorMessage = errorMessage || 'ERR_INTERRUPTED: Обработка транзакции была прервана';
+      const previousStatus = tx.status;
       
       await this.repository.update(
         { hash, status: 'processing' }, // Разблокируем только если статус 'processing'
         { 
-          status: newStatus,
-          errorMessage: errorMessage || tx.errorMessage  // Сохраняем ошибку, если она есть
+          status: 'failed',
+          errorMessage: finalErrorMessage
         }
       );
       
-      console.log(`[TransactionRepo] Транзакция ${hash} разблокирована со статусом ${newStatus}`);
+      console.log(`[TransactionRepo] Транзакция ${hash} разблокирована со статусом 'failed', ошибка: ${finalErrorMessage}`);
+      
+      // Добавляем запись в историю
+      await this.historyRepository.addHistoryRecord(
+        hash,
+        TransactionActions.UNLOCKED,
+        'failed',
+        previousStatus,
+        finalErrorMessage
+      );
+      
       return true;
     } catch (error) {
       console.error(`[TransactionRepo] Ошибка при разблокировке транзакции ${hash}: ${(error as Error).message}`);
@@ -171,7 +197,37 @@ export class TransactionRepository {
       newTransaction.errorMessage = transaction.statusMsg;
     }
 
-    return await this.repository.save(newTransaction);
+    const savedTransaction = await this.repository.save(newTransaction);
+    
+    // Добавляем запись в историю
+    const isNewTransaction = !(await this.exists(transaction.hash));
+    if (isNewTransaction) {
+      await this.historyRepository.addHistoryRecord(
+        transaction.hash,
+        TransactionActions.CREATED,
+        newTransaction.status,
+        undefined,
+        newTransaction.errorMessage || `Транзакция создана${username ? ` для пользователя @${username}` : ''}`,
+        {
+          amount: transaction.amount,
+          starsAmount,
+          gasFee: transaction.gasFee,
+          amountAfterGas: transaction.amountAfterGas,
+          exchangeRate: transaction.exchangeRate
+        }
+      );
+    } else {
+      // Если транзакция уже существовала, это обновление
+      await this.historyRepository.addHistoryRecord(
+        transaction.hash,
+        TransactionActions.STATUS_CHANGED,
+        newTransaction.status,
+        undefined,
+        newTransaction.errorMessage || `Статус транзакции обновлен на ${newTransaction.status}`
+      );
+    }
+    
+    return savedTransaction;
   }
 
   /**
@@ -187,6 +243,8 @@ export class TransactionRepository {
     const transaction = await this.findByHash(hash);
     if (!transaction) return null;
 
+    const previousStatus = transaction.status;
+    
     transaction.outgoingTransactionHash = outgoingTxHash;
     transaction.fragmentTransactionHash = fragmentTxHash;
     transaction.status = success ? 'processed' : 'failed';
@@ -194,7 +252,31 @@ export class TransactionRepository {
       transaction.errorMessage = errorMessage;
     }
 
-    return await this.repository.save(transaction);
+    const updatedTransaction = await this.repository.save(transaction);
+    
+    // Добавляем запись в историю
+    await this.historyRepository.addHistoryRecord(
+      hash,
+      TransactionActions.STARS_SENT,
+      transaction.status,
+      previousStatus,
+      success ? 
+        `Звезды успешно отправлены, хеш транзакции Fragment: ${fragmentTxHash}` :
+        `Ошибка при отправке звезд: ${errorMessage}`,
+      {
+        outgoingTxHash,
+        fragmentTxHash
+      }
+    );
+    
+    return updatedTransaction;
+  }
+
+  /**
+   * Получение истории транзакции
+   */
+  async getTransactionHistory(hash: string): Promise<any> {
+    return await this.historyRepository.getFormattedHistory(hash);
   }
 
   /**
@@ -232,7 +314,7 @@ export class TransactionRepository {
   /**
    * Получение транзакций по статусу с пагинацией
    */
-  async getTransactionsByStatus(status: 'processed' | 'processing' | 'pending' | 'failed', page: number = 1, limit: number = 20): Promise<[Transaction[], number]> {
+  async getTransactionsByStatus(status: 'processed' | 'processing' | 'failed', page: number = 1, limit: number = 20): Promise<[Transaction[], number]> {
     return await this.repository.findAndCount({
       where: { status },
       order: { createdAt: 'DESC' },
@@ -242,22 +324,56 @@ export class TransactionRepository {
   }
 
   /**
+   * Получение транзакций с исправимыми ошибками
+   * Это заменяет предыдущий метод getPendingTransactions
+   */
+  async getRetryableFailedTransactions(page: number = 1, limit: number = 20): Promise<[Transaction[], number]> {
+    // Список ошибок, при которых нет смысла повторять транзакцию
+    const nonRetryableErrors = [
+      "ERR_INVALID_USERNAME", 
+      "ERR_MISSING_COMMENT",
+      "ERR_STARS_BELOW_MINIMUM",
+      "ERR_STARS_ABOVE_MAXIMUM"
+    ];
+
+    // Создаем запрос для получения транзакций с ошибками, которые можно повторить
+    const queryBuilder = this.repository.createQueryBuilder('tx')
+      .where('tx.status = :status', { status: 'failed' });
+    
+    // Исключаем транзакции с неисправимыми ошибками
+    for (const error of nonRetryableErrors) {
+      queryBuilder.andWhere('tx.errorMessage NOT LIKE :error', { error: `%${error}%` });
+    }
+    
+    // Применяем сортировку и пагинацию
+    const [transactions, count] = await queryBuilder
+      .orderBy('tx.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+    
+    return [transactions, count];
+  }
+
+  /**
    * Получение статистики по транзакциям
    */
   async getTransactionStats(): Promise<{ 
     totalCount: number; 
     processedCount: number;
     processingCount: number;
-    pendingCount: number;
-    failedCount: number; 
+    failedCount: number;
+    retryableFailedCount: number;
     totalStars: number;
     totalTon: string;
   }> {
     const totalCount = await this.repository.count();
     const processedCount = await this.repository.count({ where: { status: 'processed' } });
     const processingCount = await this.repository.count({ where: { status: 'processing' } });
-    const pendingCount = await this.repository.count({ where: { status: 'pending' } });
     const failedCount = await this.repository.count({ where: { status: 'failed' } });
+    
+    // Получение количества транзакций с исправимыми ошибками
+    const [, retryableFailedCount] = await this.getRetryableFailedTransactions(1, 0);
     
     // Общее количество звезд
     const starsResult = await this.repository
@@ -277,8 +393,8 @@ export class TransactionRepository {
       totalCount,
       processedCount,
       processingCount,
-      pendingCount,
       failedCount,
+      retryableFailedCount,
       totalStars: starsResult.total || 0,
       totalTon: tonResult.total ? Number(tonResult.total).toFixed(9) : '0'
     };

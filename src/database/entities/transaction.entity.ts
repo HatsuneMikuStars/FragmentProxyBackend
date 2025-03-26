@@ -82,7 +82,7 @@ export class Transaction {
     default: 'processed'
   })
   @Index()
-  status: 'processed' | 'processing' | 'pending' | 'failed';
+  status: 'processed' | 'processing' | 'failed';
 
   /**
    * Сообщение об ошибке, если транзакция завершилась с ошибкой
