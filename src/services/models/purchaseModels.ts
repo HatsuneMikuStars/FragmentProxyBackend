@@ -11,9 +11,14 @@ export interface PurchaseResult {
   success: boolean;
   
   /**
-   * Хеш транзакции (если доступен)
+   * Хеш транзакции в Fragment (если доступен)
    */
   transactionHash?: string;
+  
+  /**
+   * Хеш исходящей TON транзакции на адрес Fragment
+   */
+  outgoingTransactionHash?: string;
   
   /**
    * Сумма транзакции

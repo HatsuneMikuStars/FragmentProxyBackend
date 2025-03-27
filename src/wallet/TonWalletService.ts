@@ -1,7 +1,7 @@
 import { TonClient, WalletContractV4, beginCell, toNano, internal, Address, SendMode } from '@ton/ton';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { IWalletService } from './IWalletService';
-import { SendTransactionParams, TransactionResult, TransactionStatus, WalletConfig } from './models/walletModels';
+import { GetTransactionsParams, SendTransactionParams, TransactionResult, TransactionStatus, TransactionType, WalletConfig, WalletTransaction } from './models/walletModels';
 import { WalletAccount } from '../apiClient/models/apiModels';
 
 /**
@@ -20,37 +20,29 @@ export class TonWalletService implements IWalletService {
    */
   async initializeWallet(config: WalletConfig): Promise<void> {
     try {
-      console.log("🔄 Начинаем инициализацию кошелька...");
+      console.log("[Wallet] Initializing TON wallet");
       this.config = config;
       
-      // Создаем клиент TON
+      // Create TON client
       const endpoint = config.apiUrl || 
         (config.useTestnet ? 'https://testnet.toncenter.com/api/v2/jsonRPC' : 'https://toncenter.com/api/v2/jsonRPC');
-      
-      console.log(`📡 Используем endpoint: ${endpoint}`);
       
       this.client = new TonClient({
         endpoint,
         apiKey: config.apiKey
       });
       
-      console.log("👤 Клиент TON создан");
-      
-      // Преобразуем мнемоническую фразу в ключи
+      // Convert mnemonic to keys
       const mnemonicArray = config.mnemonic.split(' ');
-      console.log(`🔑 Преобразуем мнемоническую фразу (${mnemonicArray.length} слов) в ключи...`);
       this.keyPair = await mnemonicToPrivateKey(mnemonicArray);
-      console.log("✅ Ключи получены успешно");
       
-      // Используем явно указанный subwalletId или 0 по умолчанию
+      // Use specified subwalletId or default to 0
       const subwalletId = config.subwalletId !== undefined ? config.subwalletId : 0;
       
-      // Создаем экземпляр кошелька
-      const workchain = 0; // Обычно используется workchain 0
-      console.log(`🏗️ Создаем кошелек с subwalletId: ${subwalletId}`);
+      // Create wallet instance
+      const workchain = 0; // Usually workchain 0 is used
       
-      // Для работы с V5 кошельками используем V4R2, так как это самая новая версия, доступная в библиотеке
-      // При этом правильно указываем ID кошелька
+      // For V5 wallets compatibility, we use V4R2 as this is the newest version available in the library
       this.wallet = WalletContractV4.create({ 
         workchain, 
         publicKey: this.keyPair.publicKey,
@@ -59,11 +51,10 @@ export class TonWalletService implements IWalletService {
       
       this.isInitialized = true;
       const walletAddress = await this.getWalletAddress();
-      console.log(`✅ Кошелек инициализирован. Адрес: ${walletAddress}`);
-      console.log(`⚠️ Внимание: используется WalletContractV4 для работы с V5 кошельком. Некоторые специфические функции V5 могут быть недоступны.`);
+      console.log(`[Wallet] Initialized successfully. Address: ${walletAddress}`);
     } catch (error: any) {
-      console.error('❌ Ошибка при инициализации кошелька:', error);
-      throw new Error(`Не удалось инициализировать кошелек: ${error.message}`);
+      console.error('[Wallet] Initialization error:', error.message);
+      throw new Error(`Failed to initialize wallet: ${error.message}`);
     }
   }
   
@@ -117,16 +108,16 @@ export class TonWalletService implements IWalletService {
     
     try {
       if (!this.client || !this.wallet || !this.keyPair) {
-        throw new Error("Кошелек не инициализирован");
+        throw new Error("Wallet is not initialized");
       }
       
       const maxRetries = params.maxRetries || 3;
       let lastError: Error | null = null;
       
-      // Преобразуем адрес получателя в формат Address
+      // Convert recipient address to Address format
       const toAddress = Address.parse(params.toAddress);
       
-      // Преобразуем сумму в наноТОН
+      // Convert amount to nanoTON
       let amount: bigint;
       if (typeof params.amount === 'string') {
         amount = BigInt(params.amount);
@@ -136,17 +127,16 @@ export class TonWalletService implements IWalletService {
         amount = params.amount;
       }
       
-      // Реализуем стратегию повторных попыток с экспоненциальной задержкой
+      // Implement retry strategy with exponential backoff
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          console.log(`Попытка отправки транзакции ${attempt}/${maxRetries}`);
+          console.log(`[Wallet] Transaction attempt ${attempt}/${maxRetries}`);
           
-          // Открываем кошелек
+          // Open wallet
           const walletContract = this.client.open(this.wallet);
           const seqno = await walletContract.getSeqno();
-          console.log(`Текущий seqno: ${seqno}`);
           
-          // Создаем сообщение
+          // Create message
           const msgParams = {
             to: toAddress,
             value: amount,
@@ -154,16 +144,16 @@ export class TonWalletService implements IWalletService {
             sendMode: SendMode.PAY_GAS_SEPARATELY | SendMode.IGNORE_ERRORS
           };
           
-          // Если есть комментарий, формируем тело сообщения
+          // If there's a comment, form message body
           let msgBody;
           if (params.comment) {
             msgBody = beginCell()
-              .storeUint(0, 32) // op = 0 для текстового комментария
+              .storeUint(0, 32) // op = 0 for text comment
               .storeStringTail(params.comment)
               .endCell();
           }
           
-          // Создаем и отправляем транзакцию
+          // Create and send transaction
           const transfer = await this.wallet.createTransfer({
             seqno,
             secretKey: this.keyPair.secretKey,
@@ -175,17 +165,17 @@ export class TonWalletService implements IWalletService {
                 body: msgBody
               })
             ],
-            validUntil: Math.floor(Date.now() / 1000) + (params.timeout || 60), // По умолчанию транзакция действительна 60 секунд
+            validUntil: Math.floor(Date.now() / 1000) + (params.timeout || 60), // Default transaction valid for 60 seconds
           });
           
-          // Отправляем внешнее сообщение
+          // Send external message
           await this.client.sendExternalMessage(this.wallet, transfer);
           
-          // Получаем хеш транзакции
+          // Get transaction hash
           const transferBoc = transfer.toBoc();
           const txHash = Buffer.from(transferBoc).toString('base64').substring(0, 44);
           
-          console.log(`Транзакция успешно отправлена. Hash: ${txHash}`);
+          console.log(`[Wallet] Transaction sent successfully. Hash: ${txHash}`);
           
           return {
             success: true,
@@ -196,28 +186,28 @@ export class TonWalletService implements IWalletService {
             }
           };
         } catch (error: any) {
-          lastError = new Error(error.message || "Неизвестная ошибка при отправке транзакции");
-          console.error(`Ошибка при отправке транзакции (попытка ${attempt}/${maxRetries}):`, error);
+          lastError = new Error(error.message || "Unknown error sending transaction");
+          console.error(`[Wallet] Transaction error (attempt ${attempt}/${maxRetries}): ${error.message}`);
           
-          // Если это последняя попытка, выбрасываем ошибку
+          // If this is the last attempt, throw the error
           if (attempt === maxRetries) {
             throw lastError;
           }
           
-          // Экспоненциальная задержка между попытками (1s, 2s, 4s, ...)
+          // Exponential backoff between attempts (1s, 2s, 4s, ...)
           const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30000);
-          console.log(`Ожидание ${delay}мс перед следующей попыткой...`);
+          console.log(`[Wallet] Waiting ${delay}ms before next attempt...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
       
-      // Если все попытки завершились неудачно
-      throw lastError || new Error('Не удалось отправить транзакцию после нескольких попыток');
+      // If all attempts failed
+      throw lastError || new Error('Failed to send transaction after multiple attempts');
     } catch (error: any) {
-      console.error('Ошибка при отправке транзакции:', error);
+      console.error('[Wallet] Transaction failed:', error.message);
       return {
         success: false,
-        errorMessage: error.message || 'Неизвестная ошибка при отправке транзакции'
+        errorMessage: error.message || 'Unknown transaction error'
       };
     }
   }
@@ -327,5 +317,301 @@ export class TonWalletService implements IWalletService {
       publicKey: this.keyPair.publicKey.toString('hex'),
       walletStateInit
     };
+  }
+  
+  /**
+   * Извлекает комментарий из тела сообщения, если есть
+   * @param body Тело сообщения
+   * @returns Комментарий или undefined
+   */
+  private extractCommentFromBody(body: any): string | undefined {
+    if (!body) return undefined;
+    
+    // Вспомогательная функция для безопасной сериализации объектов с BigInt
+    const safeJsonStringify = (obj: any, space: number = 2): string => {
+      return JSON.stringify(obj, (key, value) => {
+        if (typeof value === 'bigint') {
+          return value.toString() + 'n';
+        }
+        // Не выводим значения Buffer в детальном виде
+        if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+          return `[Buffer length: ${value.data.length}]`;
+        }
+        return value;
+      }, space);
+    };
+    
+    try {
+      // Способ 1: Стандартный для @ton/ton - комментарий в виде Cell с опкодом 0
+      if (typeof body === 'object' && body !== null && typeof body.beginParse === 'function') {
+        const bodySlice = body.beginParse();
+        
+        if (bodySlice.remainingBits >= 32) {
+          const op = bodySlice.loadUint(32);
+          
+          if (op === 0) {
+            // op = 0 означает текстовый комментарий
+            const comment = bodySlice.loadStringTail();
+            return comment;
+          }
+        }
+      }
+      
+      // Способ 2: Для сообщений в формате MCP/TON API - комментарий в декодированном теле
+      if (typeof body === 'object' && body !== null) {
+        // Проверяем наличие decoded_body с полем text (как в ответе MCP)
+        if (body.decoded_body && body.decoded_body.text) {
+          return body.decoded_body.text;
+        }
+        
+        // Проверяем наличие decoded_op_name "text_comment"
+        if (body.decoded_op_name === 'text_comment' && body.decoded_body && body.decoded_body.text) {
+          return body.decoded_body.text;
+        }
+        
+        // Проверяем наличие body с полем text
+        if (body.body && body.body.text) {
+          return body.body.text;
+        }
+        
+        // Проверяем наличие текстового комментария в других форматах
+        if (body.text && typeof body.text === 'string') {
+          return body.text;
+        }
+        
+        // Иногда комментарий может быть в свойстве comment
+        if (body.comment && typeof body.comment === 'string') {
+          return body.comment;
+        }
+        
+        // Проверяем наличие данных в формате base64
+        if (body.data && typeof body.data === 'string') {
+          try {
+            // Пробуем декодировать base64 строку
+            const decoded = Buffer.from(body.data, 'base64').toString('utf8');
+            if (decoded && decoded.length > 0 && /^[\x00-\x7F]*$/.test(decoded)) {
+              return decoded;
+            }
+          } catch (e) {
+            // Если декодирование не удалось, игнорируем ошибку
+          }
+        }
+      }
+      
+      // Способ 3: JSON сериализованный комментарий
+      if (typeof body === 'string' && body.startsWith('{') && body.endsWith('}')) {
+        try {
+          const jsonBody = JSON.parse(body);
+          if (jsonBody.text || jsonBody.comment || jsonBody.message) {
+            return jsonBody.text || jsonBody.comment || jsonBody.message;
+          }
+        } catch (e) {
+          // Если парсинг JSON не удался, это не JSON
+        }
+      }
+      
+      // Способ 4: Прямой текстовый комментарий
+      if (typeof body === 'string' && body.length > 0) {
+        return body;
+      }
+    } catch (err) {
+      // Не выводим полную ошибку
+      console.warn("Ошибка при извлечении комментария из сообщения");
+    }
+    
+    return undefined;
+  }
+  
+  /**
+   * Получает историю транзакций кошелька
+   * @param params Параметры запроса транзакций (лимит, пагинация)
+   * @returns Массив транзакций кошелька
+   */
+  async getTransactions(params: GetTransactionsParams): Promise<WalletTransaction[]> {
+    this.checkInitialization();
+    
+    if (!this.client || !this.wallet) {
+      throw new Error("Кошелек не инициализирован");
+    }
+    
+    try {
+      const address = this.wallet.address;
+      const limit = params.limit || 10;
+      const lt = params.lt;
+      const hash = params.hash;
+      const to_lt = params.to_lt;
+      const archival = params.archival || false;
+      // Получаем тип из параметров
+      const type = params.type;
+      
+      // Получаем транзакции с архивного сервера, если нужно
+      const transactions = await this.client.getTransactions(address, {
+        limit,
+        lt,
+        hash,
+        to_lt,
+        archival
+      });
+      
+      // Преобразуем транзакции в наш формат
+      let result = transactions.map(tx => this.convertTonTransaction(tx));
+      
+      // После маппинга транзакций добавляем фильтрацию
+      if (type) {
+        result = result.filter(tx => tx.type === type);
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Ошибка при получении транзакций:', error);
+      throw new Error('Не удалось получить список транзакций');
+    }
+  }
+  
+  /**
+   * Получение транзакции по хешу
+   * @param hash Хеш транзакции
+   * @returns Транзакция или null, если не найдена
+   */
+  async getTransactionByHash(hash: string): Promise<WalletTransaction | null> {
+    this.checkInitialization();
+    
+    if (!this.client || !this.wallet) {
+      throw new Error("Кошелек не инициализирован");
+    }
+    
+    try {
+      // Получаем последние транзакции и ищем по хешу
+      const transactions = await this.getTransactions({
+        limit: 50,
+        archival: true
+      });
+      
+      // Ищем транзакцию с нужным хешем
+      const transaction = transactions.find(tx => tx.id === hash);
+      return transaction || null;
+    } catch (error) {
+      console.error(`Ошибка при получении транзакции по хешу ${hash}:`, error);
+      return null;
+    }
+  }
+  
+  /**
+   * Преобразует транзакцию TON в формат WalletTransaction
+   * @param tx Транзакция TON
+   * @returns Транзакция в формате WalletTransaction
+   */
+  private convertTonTransaction(tx: any): WalletTransaction {
+    const myAddress = this.wallet!.address.toString();
+    
+    // Определяем тип транзакции (входящая или исходящая)
+    let type = TransactionType.UNKNOWN;
+    let fromAddress = '';
+    let toAddress = '';
+    let amount = BigInt(0);
+    let comment: string | undefined;
+    
+    // Обработка входящего сообщения
+    const inMessage = tx.inMessage;
+    if (inMessage && inMessage.info && inMessage.info.type === 'internal' && inMessage.info.src) {
+      // Входящий перевод
+      type = TransactionType.INCOMING;
+      fromAddress = inMessage.info.src.toString();
+      toAddress = myAddress;
+      
+      // Преобразуем сумму в BigInt
+      if (inMessage.info.value && inMessage.info.value.coins) {
+        amount = BigInt(inMessage.info.value.coins);
+      }
+      
+      // Извлекаем комментарий
+      comment = this.extractCommentFromBody(inMessage.body);
+    } 
+    
+    // Обработка исходящих сообщений
+    let outMessages: any[] = [];
+    
+    // Преобразуем outMessages в массив для унифицированной обработки
+    if (tx.outMessages) {
+      if (Array.isArray(tx.outMessages)) {
+        outMessages = tx.outMessages;
+      } else if (typeof tx.outMessages.get === 'function') {
+        // Если это словарь, преобразуем его в массив
+        outMessages = [];
+        for (let i = 0; i < 10; i++) { // Предполагаем, что максимум 10 сообщений
+          const msg = tx.outMessages.get(i);
+          if (msg) outMessages.push(msg);
+          else break;
+        }
+      }
+    }
+    
+    // Если есть исходящие сообщения, обрабатываем их
+    if (outMessages.length > 0) {
+      // Обрабатываем первое исходящее сообщение (обычно основное для простых переводов)
+      const firstOutMsg = outMessages[0];
+      
+      if (firstOutMsg && firstOutMsg.info && firstOutMsg.info.type === 'internal' && firstOutMsg.info.dest) {
+        // Если нет входящего сообщения или тип уже не определен как входящий,
+        // считаем транзакцию исходящей
+        if (type !== TransactionType.INCOMING) {
+          type = TransactionType.OUTGOING;
+          fromAddress = myAddress;
+          toAddress = firstOutMsg.info.dest.toString();
+          
+          // Преобразуем сумму в BigInt
+          if (firstOutMsg.info.value && firstOutMsg.info.value.coins) {
+            amount = BigInt(firstOutMsg.info.value.coins);
+          }
+          
+          // Извлекаем комментарий
+          comment = this.extractCommentFromBody(firstOutMsg.body);
+        }
+      }
+    }
+    
+    // Вычисляем комиссию
+    const fee = tx.totalFees && tx.totalFees.coins 
+      ? BigInt(tx.totalFees.coins) 
+      : BigInt(0);
+    
+    // Преобразуем хеш в строку (в зависимости от типа)
+    let hashString: string = 'unknown_hash';
+    
+    try {
+      if (typeof tx.hash === 'function') {
+        hashString = tx.hash();
+      } else if (typeof tx.hash === 'string') {
+        hashString = tx.hash;
+      } else if (tx.hash) {
+        // Для всех остальных случаев просто преобразуем в строку
+        hashString = String(tx.hash);
+      }
+    } catch (error) {
+      // Уменьшаем детализацию ошибки
+      console.warn("Ошибка при преобразовании хеша транзакции");
+      hashString = 'hash_error';
+    }
+    
+    // Формируем объект транзакции
+    const walletTx: WalletTransaction = {
+      id: `${tx.lt}_${hashString}`,
+      type,
+      timestamp: tx.now || Math.floor(Date.now() / 1000),
+      lt: String(tx.lt),
+      hash: hashString,
+      fromAddress,
+      toAddress,
+      amount,
+      fee,
+      comment,
+      status: TransactionStatus.COMPLETED, // Все полученные транзакции считаем завершенными
+      additionalData: {
+        // Дополнительные данные о транзакции могут быть полезны для отладки
+        utime: tx.now
+      }
+    };
+    
+    return walletTx;
   }
 } 

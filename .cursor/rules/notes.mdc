@@ -1,0 +1,43 @@
+---
+description: Тут описаны все правила того как надо создавать заметки. Создавай заметки абсолютно всегда.
+globs: 
+alwaysApply: true
+---
+- Always keep detailed notes in markdown (.md) files during your work.
+- Record important research findings, decisions, approaches, and context relevant to tasks.
+- Include timestamps (date and time) with each entry.
+- Clearly structure notes with headings and subheadings for readability.
+- Regularly revisit and reference these notes to maintain comprehensive project understanding and ensure consistent decision-making.
+- Use markdown formatting to enhance clarity and visual comprehension.
+- Notes should be saved consistently in a dedicated, easy-to-access location within the project (e.g., `.knowledge/notes`).
+
+## Example of notes structure:
+
+```markdown
+## [2025-03-25 14:30] Database optimization research
+
+- Reviewed PostgreSQL documentation on indexing strategies.
+- Identified B-tree indexes as optimal for current query patterns.
+- Found existing solution in internal codebase (`db/indexing.sql`).
+
+---
+
+## [2025-03-25 15:45] Authentication bug analysis
+
+- Performed web search for "JWT token expiration handling".
+- Discovered existing fix in external source: [link].
+- Decision: adapt solution from external source after code review.
+
+---
+
+## [2025-03-26 10:00] Architecture visualization
+
+- Created ASCII diagram to clarify microservice interactions:
+
+```
+User Request --> [API Gateway] --> (Auth Service)
+                          |
+                          --> (User Service) --> Database
+                          |
+                          --> (Payment Service) --> [Stripe API]
+```

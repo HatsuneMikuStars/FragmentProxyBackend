@@ -13,7 +13,8 @@ import {
   GetBuyStarsLinkResponse, 
   WalletAccount,
   DeviceInfo,
-  FragmentApiException
+  FragmentApiException,
+  StarsPriceResponse
 } from './models/apiModels';
 import { FRAGMENT_CONFIG } from '../config';
 
@@ -105,19 +106,20 @@ export class FragmentApiClient {
   /**
    * Поиск получателей по имени пользователя
    * @param username Имя пользователя для поиска
+   * @param quantity Количество звезд (влияет на результаты поиска в API Fragment)
    * @returns Результат поиска с информацией о получателях
    */
-  public async searchRecipientsAsync(username: string): Promise<SearchRecipientsResponse> {
-    console.log(`Поиск пользователя: ${username}`);
+  public async searchRecipientsAsync(username: string, quantity: number): Promise<SearchRecipientsResponse> {
+    console.log(`Поиск пользователя: ${username} (для ${quantity} звезд)`);
     
     const headers = this.addDefaultHeaders({
-      'Referer': `${this._baseUrl}/stars/buy?quantity=50`
+      'Referer': `${this._baseUrl}/stars/buy?quantity=${quantity}`
     });
     
     const formData = new URLSearchParams();
     formData.append('hash', this._apiHash);
     formData.append('query', username);
-    formData.append('quantity', '50');
+    formData.append('quantity', quantity.toString());
     formData.append('method', 'searchStarsRecipient');
     
     try {
@@ -278,7 +280,7 @@ export class FragmentApiClient {
     formData.append('method', 'updateStarsBuyState');
     
     // Логируем отправляемые данные
-    console.log(`[API] updatePurchaseState данные: ${formData.toString()}`);
+    // console.log(`[API] updatePurchaseState данные: ${formData.toString()}`);
     
     try {
       const response = await fetch(`${this._baseUrl}/api`, {
@@ -303,7 +305,7 @@ export class FragmentApiClient {
       }
       
       const content = await response.text();
-      console.log(`[API] updatePurchaseState ответ: ${content}`);
+      // console.log(`[API] updatePurchaseState ответ: ${content}`);
       
       // Анализируем ответ
       try {
@@ -388,7 +390,7 @@ export class FragmentApiClient {
     console.log(`\n[API] Начало мониторинга статуса для reqId: ${reqId}`);
     
     let attempts = 0;
-    let currentMode = this.currentMode || "new";
+    let currentMode = this.currentMode || "processing"; // Начинаем сразу с processing
     let currentDh = this.currentDh || "";
     
     let stableStateCounter = 0;
@@ -396,170 +398,125 @@ export class FragmentApiClient {
     let previousState = "";
     let lastHtmlContent = "";
     
-    // Попробуем сразу после confirmReq принудительно отправить запрос с mode=done
-    // Это может помочь правильно инициализировать состояние на сервере
-    try {
-      console.log("[API] Отправка принудительного запроса в режиме done для инициализации");
-      const forceDoneResponse = await this.updatePurchaseStateAsync(reqId, "done", currentDh);
-      
-      if (forceDoneResponse.ok) {
-        if (forceDoneResponse.mode) {
-          currentMode = forceDoneResponse.mode;
-          this.currentMode = currentMode;
-        }
-        
-        if (forceDoneResponse.dh) {
-          currentDh = forceDoneResponse.dh;
-          this.currentDh = currentDh;
-        }
-      }
-    } catch (ex) {
-      console.log(`[API] Ошибка принудительного запроса: ${(ex as Error).message}`);
-    }
+    // Удаляем принудительный запрос с mode=done, чтобы избежать создания новых сессий
     
-    // После принудительного запроса возвращаемся к processing для обычного мониторинга
-    currentMode = "processing";
-    this.currentMode = "processing";
+    console.log(`[API] Попытка №1 проверки статуса. Mode: ${currentMode}`);
     
     while (maxAttempts === 0 || attempts < maxAttempts) {
       attempts++;
+      
       console.log(`\n[API] Попытка проверки статуса #${attempts}. Mode: ${currentMode}`);
       
-      try {
-        const statusResponse = await this.updatePurchaseStateAsync(reqId, currentMode, currentDh);
+      // Получаем текущий статус
+      const statusResponse = await this.updatePurchaseStateAsync(reqId, currentMode, currentDh);
+      
+      // Проверяем на ошибку запроса
+      if (!statusResponse.ok && statusResponse.state?.status === "error") {
+        console.log(`[API] Ошибка при попытке #${attempts}: ${statusResponse.state.msg}`);
         
-        // Проверяем индикаторы завершения
-        let completionDetected = false;
-        
-        // 1. Проверяем режим и состояние
-        if (statusResponse.mode === "done" || statusResponse.state?.status === "done") {
-          console.log("[API] Обнаружен режим done");
-          stableStateCounter++;
-          completionDetected = true;
+        // Если ошибка связана с HTTP, пробуем еще раз
+        if (statusResponse.state.msg.includes("HTTP Error")) {
+          console.log("[API] Ошибка сети, повторная попытка через 3 секунды");
+          await new Promise<void>(resolve => setTimeout(resolve, 3000));
+          continue;
         }
         
-        // 2. Проверяем HTML-контент
-        if (statusResponse.html && typeof statusResponse.html === 'string') {
-          const shortHtml = statusResponse.html.substring(0, 100) + "...";
-          console.log(`[API] Получен HTML: ${shortHtml}`);
+        // Возвращаем ошибку клиенту
+        return {
+          ok: false,
+          state: "error",
+          error: statusResponse.state.msg
+        };
+      }
+      
+      // Если получен HTML с уведомлением об успешной покупке
+      if (statusResponse.html) {
+        // Сохраняем последний HTML
+        lastHtmlContent = statusResponse.html;
+        
+        // Проверяем на завершение
+        if (lastHtmlContent.includes("purchase has been completed") || 
+            lastHtmlContent.includes("stars have been credited") || 
+            lastHtmlContent.includes("успешно зачислены") ||
+            lastHtmlContent.includes("successful")) {
           
-          if (statusResponse.html.includes("Stars received") || 
-              statusResponse.html.includes("Звезды получены") ||
-              statusResponse.html.includes("Purchase completed")) {
-            console.log("[API] Найден индикатор завершения в HTML");
-            stableStateCounter++;
-            completionDetected = true;
-          }
-        }
-        
-        // 3. Проверяем длительное пребывание в processing
-        if (statusResponse.mode === "processing") {
-          processingCounter++;
-          console.log(`[API] Режим processing: попытка ${processingCounter}`);
-          
-          // Каждые 5 попыток отправляем принудительный запрос в режиме done
-          if (processingCounter % 5 === 0) {
-            console.log("[API] Принудительная проверка режима done");
-            const testDoneResponse = await this.updatePurchaseStateAsync(reqId, "done", currentDh);
-            
-            if (testDoneResponse.ok) {
-              if (testDoneResponse.mode === "done" || testDoneResponse.state?.status === "done") {
-                console.log("[API] Режим done подтвержден принудительным запросом");
-                stableStateCounter += 2;
-                completionDetected = true;
-              }
-              
-              if (testDoneResponse.dh) {
-                currentDh = testDoneResponse.dh;
-                this.currentDh = currentDh;
-              }
-            }
-          }
-          
-          // После 15 попыток в режиме processing, принудительно завершаем
-          if (processingCounter >= 15) {
-            console.log("[API] Превышено максимальное время ожидания в режиме processing");
-            return {
-              ok: true,
-              state: "completed", // Принудительно считаем завершенным
-              error: null
-            };
-          }
-        } else {
-          processingCounter = 0;
-        }
-        
-        // Если не обнаружено признаков завершения, сбрасываем счетчик
-        if (!completionDetected) {
-          stableStateCounter = 0;
-        } else {
-          console.log(`[API] Обнаружены признаки завершения: ${stableStateCounter}/3`);
-        }
-        
-        // Проверяем стабильность состояния
-        if (stableStateCounter >= 3) {
-          console.log("[API] Транзакция завершена успешно");
+          console.log("[API] Обнаружен HTML с подтверждением успешной покупки");
           return {
             ok: true,
             state: "completed",
             error: null
           };
         }
-        
-        // Обновляем режим и dh для следующего запроса
-        if (statusResponse.ok) {
-          if (statusResponse.mode) {
-            currentMode = statusResponse.mode;
-            this.currentMode = currentMode;
-          }
-          
-          if (statusResponse.dh) {
-            currentDh = statusResponse.dh;
-            this.currentDh = currentDh;
-          }
-          
-          // Проверяем needUpdate
-          if (statusResponse.needUpdate) {
-            console.log("[API] Дополнительный запрос из-за needUpdate=true");
-            const updateResponse = await this.updatePurchaseStateAsync(reqId, currentMode, currentDh);
-            
-            if (updateResponse.ok) {
-              if (updateResponse.mode) {
-                currentMode = updateResponse.mode;
-                this.currentMode = currentMode;
-              }
-              
-              if (updateResponse.dh) {
-                currentDh = updateResponse.dh;
-                this.currentDh = currentDh;
-              }
-            }
-          }
-        }
-        
-        // Проверяем наличие ошибки
-        if (statusResponse.state?.status === "error") {
-          console.log(`[API] Ошибка в статусе: ${statusResponse.state.msg}`);
-          return {
-            ok: false,
-            state: "error",
-            error: statusResponse.state.msg
-          };
-        }
-        
-        // Задержка перед следующей проверкой
-        await new Promise<void>(resolve => setTimeout(resolve, delayBetweenAttempts));
-      } catch (ex) {
-        console.log(`[API] Ошибка проверки: ${(ex as Error).message}`);
-        await new Promise<void>(resolve => setTimeout(resolve, delayBetweenAttempts));
       }
+      
+      // Переключение режима после определенного количества попыток
+      if (currentMode === "processing" && processingCounter >= 10) {
+        console.log("[API] Режим processing: попытка " + processingCounter);
+        // После 10 попыток проверяем режим done
+        if (processingCounter % 10 === 0) {
+          console.log("[API] Принудительная проверка режима done");
+          const doneResponse = await this.updatePurchaseStateAsync(reqId, "done", currentDh);
+          
+          // Не меняем режим обратно на processing, если done вернул успех
+          if (doneResponse.ok && doneResponse.mode === "done") {
+            currentMode = "done";
+            this.currentMode = currentMode;
+            
+            if (doneResponse.dh) {
+              currentDh = doneResponse.dh;
+              this.currentDh = currentDh;
+            }
+            
+            console.log("[API] Режим изменен на done");
+          }
+        }
+        
+        processingCounter++;
+      } else if (currentMode === "processing") {
+        processingCounter++;
+      }
+      
+      // Обновляем режим и dh для следующего запроса
+      if (statusResponse.ok) {
+        // Если есть изменения в режиме, принимаем их
+        if (statusResponse.mode && statusResponse.mode !== currentMode) {
+          console.log(`[API] Режим изменен с ${currentMode} на ${statusResponse.mode}`);
+          currentMode = statusResponse.mode;
+          this.currentMode = currentMode;
+        }
+        
+        if (statusResponse.dh) {
+          currentDh = statusResponse.dh;
+          this.currentDh = currentDh;
+        }
+        
+        // Проверяем needUpdate - НЕ создаем новую сессию, а обновляем состояние текущей
+        if (statusResponse.needUpdate) {
+          console.log("[API] Получен флаг needUpdate=true, продолжаем с текущим режимом");
+          // Не делаем дополнительных запросов, которые могут создать множественные сессии
+        }
+      }
+      
+      // Проверяем наличие ошибки
+      if (statusResponse.state?.status === "error") {
+        console.log(`[API] Ошибка в статусе: ${statusResponse.state.msg}`);
+        return {
+          ok: false,
+          state: "error",
+          error: statusResponse.state.msg
+        };
+      }
+      
+      // Задержка перед следующей проверкой
+      await new Promise<void>(resolve => setTimeout(resolve, delayBetweenAttempts));
     }
     
-    console.log(`[API] Достигнуто максимальное число попыток (${maxAttempts})`);
+    // Если исчерпаны все попытки
+    console.log(`[API] Исчерпано максимальное количество попыток (${maxAttempts})`);
     return {
-      ok: true,
+      ok: false,
       state: "timeout",
-      error: `Достигнуто максимальное количество попыток (${maxAttempts})`
+      error: "Timeout waiting for transaction completion"
     };
   }
 
@@ -575,7 +532,8 @@ export class FragmentApiClient {
     id: string,
     showSender: number
   ): Promise<GetBuyStarsLinkResponse> {
-    console.log(`Получение данных для транзакции: id ${id}, showSender ${showSender}`);
+    // Уменьшаем детализацию лога
+    console.log(`[FragmentAPI] Получение данных для транзакции ${id}`);
     
     const headers = this.addDefaultHeaders();
     
@@ -622,7 +580,8 @@ export class FragmentApiClient {
       }
       
       const content = await response.text();
-      console.log(`Ответ данных транзакции: ${content}`);
+      // Не выводим полный ответ
+      // console.log(`Ответ данных транзакции: ${content}`);
       
       try {
         const responseObject = JSON.parse(content);
@@ -638,7 +597,7 @@ export class FragmentApiClient {
         
         // Проверяем формат ответа и наличие необходимых полей
         if (!responseObject.transaction || !Array.isArray(responseObject.transaction.messages)) {
-          console.error("Неверный формат ответа API:", responseObject);
+          console.error("[FragmentAPI] Неверный формат ответа API");
           
           // Попытка извлечь данные из других полей если возможно
           let messages = [];
@@ -689,7 +648,7 @@ export class FragmentApiClient {
     account: WalletAccount, 
     deviceInfo?: DeviceInfo
   ): Promise<boolean> {
-    console.log(`\n[API] confirmReq вызов: reqId=${reqId}`);
+    console.log(`[FragmentAPI] Подтверждение транзакции ${reqId}`);
     
     const headers = this.addDefaultHeaders({
       'Referer': `${this._baseUrl}/stars/buy?req_id=${reqId}`
@@ -724,8 +683,8 @@ export class FragmentApiClient {
     formData.append('id', reqId);
     formData.append('method', 'confirmReq');
     
-    // Логируем отправляемые данные
-    console.log(`[API] confirmReq данные: ${formData.toString().substring(0, 100)}...`);
+    // Удаляем лишние данные в логе
+    // console.log(`[API] confirmReq данные: ${formData.toString().substring(0, 100)}...`);
     
     try {
       const response = await fetch(`${this._baseUrl}/api`, {
@@ -736,18 +695,19 @@ export class FragmentApiClient {
       });
       
       if (!response.ok) {
-        console.log(`[API] confirmReq ошибка: ${response.status} - ${response.statusText}`);
+        console.log(`[FragmentAPI] Ошибка подтверждения: ${response.status}`);
         return false;
       }
       
       const content = await response.text();
-      console.log(`[API] confirmReq ответ: ${content}`);
+      // Убираем вывод полного содержимого ответа
+      // console.log(`[API] confirmReq ответ: ${content}`);
       
       try {
         const responseJson = JSON.parse(content);
         
         if (responseJson.ok === true) {
-          console.log("[API] confirmReq успешно выполнен");
+          console.log("[FragmentAPI] Транзакция успешно подтверждена");
           
           // Добавляем задержку перед началом проверки статуса (возможно, серверу нужно время)
           await new Promise(resolve => setTimeout(resolve, 3000));
@@ -755,17 +715,97 @@ export class FragmentApiClient {
           return true;
         } else {
           if (responseJson.error) {
-            console.log(`[API] confirmReq ошибка: ${responseJson.error}`);
+            console.log(`[FragmentAPI] Ошибка подтверждения: ${responseJson.error}`);
           }
           return false;
         }
       } catch (ex) {
-        console.log(`[API] confirmReq ошибка разбора ответа: ${(ex as Error).message}`);
+        console.log(`[FragmentAPI] Ошибка разбора ответа: ${(ex as Error).message}`);
         return false;
       }
     } catch (ex) {
-      console.log(`[API] confirmReq ошибка запроса: ${(ex as Error).message}`);
+      console.log(`[FragmentAPI] Ошибка запроса: ${(ex as Error).message}`);
       return false;
+    }
+  }
+
+  /**
+   * Получает актуальный курс обмена TON на звезды
+   * @param starsAmount Количество звезд для расчета
+   * @returns Информация о текущих ценах на звезды
+   */
+  public async updateStarsPricesAsync(starsAmount: number = 50): Promise<StarsPriceResponse> {
+    console.log(`[FragmentAPI] Getting current stars price for ${starsAmount} stars`);
+    
+    const headers = this.addDefaultHeaders({
+      'Referer': `${this._baseUrl}/stars/buy?quantity=${starsAmount}`
+    });
+    
+    const formData = new URLSearchParams();
+    formData.append('hash', this._apiHash);
+    formData.append('stars', starsAmount.toString());
+    formData.append('quantity', starsAmount.toString());
+    formData.append('method', 'updateStarsPrices');
+    
+    try {
+      const response = await fetch(`${this._baseUrl}/api`, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: AbortSignal.timeout(15000)
+      });
+      
+      if (!response.ok) {
+        throw new FragmentApiException(
+          `Error getting stars prices: ${response.status} - ${response.statusText}`
+        );
+      }
+      
+      const content = await response.text();
+      console.log(`[FragmentAPI] Stars price response received`);
+      
+      try {
+        const responseJson = JSON.parse(content);
+        
+        if (!responseJson.ok) {
+          throw new FragmentApiException(`API returned error in stars price response`);
+        }
+        
+        // Извлекаем цену из HTML-строки
+        const curPrice = responseJson.cur_price || "";
+        const priceMatch = curPrice.match(/>([\d,.]+)<span class="mini-frac">\.(\d+)<\/span>/);
+        
+        let tonPriceForStars = 0;
+        if (priceMatch && priceMatch.length >= 3) {
+          const wholePart = priceMatch[1].replace(/,/g, '');
+          const fracPart = priceMatch[2];
+          tonPriceForStars = parseFloat(`${wholePart}.${fracPart}`);
+        }
+        
+        // Вычисляем коэффициент конверсии TON в звезды
+        const starsPerTon = tonPriceForStars > 0 ? starsAmount / tonPriceForStars : 0;
+        
+        return {
+          ok: responseJson.ok,
+          curPrice: responseJson.cur_price,
+          optionsHtml: responseJson.options_html,
+          dh: responseJson.dh,
+          // Добавляем обработанные данные
+          tonPrice: tonPriceForStars,
+          starsAmount: starsAmount,
+          starsPerTon: starsPerTon
+        };
+      } catch (ex) {
+        if (ex instanceof FragmentApiException) {
+          throw ex;
+        }
+        throw new FragmentApiException(`Error parsing stars price API response: ${(ex as Error).message}`, ex as Error);
+      }
+    } catch (ex) {
+      if (ex instanceof FragmentApiException) {
+        throw ex;
+      }
+      throw new FragmentApiException(`Error getting stars prices: ${(ex as Error).message}`, ex as Error);
     }
   }
 } 
