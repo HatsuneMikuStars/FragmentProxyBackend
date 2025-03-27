@@ -286,7 +286,7 @@ export class FragmentStarsPurchaseService {
       
       const status = await this._fragmentClient.checkPurchaseStatusWithPollingAsync(
         initResult.reqId,
-        0,     // 0 = бесконечное ожидание 
+        2,     // 0 = бесконечное ожидание 
         2000   // 2 секунды между попытками
       );
       
