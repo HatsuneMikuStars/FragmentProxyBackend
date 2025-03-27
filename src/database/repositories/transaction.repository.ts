@@ -60,76 +60,101 @@ export class TransactionRepository {
    * @returns true если блокировка успешна, false если транзакция уже заблокирована или обработана
    */
   async lockTransaction(hash: string): Promise<boolean> {
-    // Проверяем, существует ли транзакция и её текущий статус
-    const tx = await this.findByHash(hash);
+    // Максимальное количество попыток
+    const maxRetries = 10;
+    // Базовая задержка (в миллисекундах)
+    const baseDelay = 300;
     
-    // Если транзакция не найдена, возвращаем true (можно обрабатывать новую)
-    if (!tx) {
-      return true;
-    }
-    
-    // Если транзакция уже обработана успешно, блокировка не требуется
-    if (tx.status === 'processed') {
-      console.log(`[TransactionRepo] Транзакция ${hash} уже обработана успешно, блокировка не требуется`);
-      return false;
-    }
-    
-    // Если транзакция уже в обработке, блокировка невозможна
-    if (tx.status === 'processing') {
-      console.log(`[TransactionRepo] Транзакция ${hash} уже обрабатывается другим процессом`);
-      return false;
-    }
-    
-    // Если транзакция имеет статус 'failed', проверим категорию ошибки
-    if (tx.status === 'failed' && tx.errorMessage) {
-      // Неисправимые ошибки, при которых повторная обработка не имеет смысла
-      const nonRetryableErrors = [
-        "ERR_INVALID_USERNAME", 
-        "ERR_MISSING_COMMENT",
-        "ERR_STARS_BELOW_MINIMUM",
-        "ERR_STARS_ABOVE_MAXIMUM"
-      ];
-      
-      // Если ошибка неисправима, блокировка не требуется
-      if (nonRetryableErrors.some(err => tx.errorMessage?.includes(err))) {
-        console.log(`[TransactionRepo] Транзакция ${hash} имеет неисправимую ошибку, повторная обработка невозможна`);
-        return false;
-      }
-    }
-    
-    try {
-      const previousStatus = tx.status;
-      
-      // Атомарно обновляем статус на 'processing'
-      await this.repository.update(
-        { hash, status: tx.status }, // обновляем только если статус не изменился
-        { status: 'processing', errorMessage: null }
-      );
-      
-      // Проверяем, действительно ли статус изменился
-      const updatedTx = await this.findByHash(hash);
-      const lockSuccessful = updatedTx?.status === 'processing';
-      
-      if (lockSuccessful) {
-        console.log(`[TransactionRepo] Транзакция ${hash} успешно заблокирована для обработки`);
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // Проверяем, существует ли транзакция и её текущий статус
+        const tx = await this.findByHash(hash);
         
-        // Добавляем запись в историю
-        await this.historyRepository.addHistoryRecord(
-          hash,
-          TransactionActions.LOCKED,
-          'processing',
-          previousStatus,
-          `Транзакция заблокирована для обработки`
-        );
-      } else {
-        console.log(`[TransactionRepo] Не удалось заблокировать транзакцию ${hash}, возможно она была заблокирована другим процессом`);
+        // Если транзакция не найдена, возвращаем true (можно обрабатывать новую)
+        if (!tx) {
+          return true;
+        }
+        
+        // Если транзакция уже обработана успешно, блокировка не требуется
+        if (tx.status === 'processed') {
+          console.log(`[TransactionRepo] Транзакция ${hash} уже обработана успешно, блокировка не требуется`);
+          return false;
+        }
+        
+        // Если транзакция уже в обработке, блокировка невозможна
+        if (tx.status === 'processing') {
+          console.log(`[TransactionRepo] Транзакция ${hash} уже обрабатывается другим процессом`);
+          return false;
+        }
+        
+        // Если транзакция имеет статус 'failed', проверим категорию ошибки
+        if (tx.status === 'failed' && tx.errorMessage) {
+          // Неисправимые ошибки, при которых повторная обработка не имеет смысла
+          const nonRetryableErrors = [
+            "ERR_INVALID_USERNAME", 
+            "ERR_MISSING_COMMENT",
+            "ERR_STARS_BELOW_MINIMUM",
+            "ERR_STARS_ABOVE_MAXIMUM"
+          ];
+          
+          // Если ошибка неисправима, блокировка не требуется
+          if (nonRetryableErrors.some(err => tx.errorMessage?.includes(err))) {
+            console.log(`[TransactionRepo] Транзакция ${hash} имеет неисправимую ошибку, повторная обработка невозможна`);
+            return false;
+          }
+        }
+        
+        const previousStatus = tx.status;
+        
+        // Попытка атомарно обновить статус с обработкой возможной блокировки базы
+        try {
+          // Атомарно обновляем статус на 'processing'
+          await this.repository.update(
+            { hash, status: tx.status }, // обновляем только если статус не изменился
+            { status: 'processing', errorMessage: null }
+          );
+          
+          // Проверяем, действительно ли статус изменился
+          const updatedTx = await this.findByHash(hash);
+          const lockSuccessful = updatedTx?.status === 'processing';
+          
+          if (lockSuccessful) {
+            console.log(`[TransactionRepo] Транзакция ${hash} успешно заблокирована для обработки`);
+            
+            // Добавляем запись в историю с механизмом повторных попыток
+            await this.addHistoryRecordWithRetry(
+              hash,
+              TransactionActions.LOCKED,
+              'processing',
+              previousStatus,
+              `Транзакция заблокирована для обработки`
+            );
+            
+            return true;
+          } else {
+            console.log(`[TransactionRepo] Не удалось заблокировать транзакцию ${hash}, возможно она была заблокирована другим процессом`);
+            return false;
+          }
+        } catch (dbError) {
+          console.error(`[TransactionRepo] Ошибка DB при блокировке транзакции ${hash} (попытка ${attempt+1}/${maxRetries}): ${(dbError as Error).message}`);
+        }
+        
+        // Если выполнение дошло до этой точки, значит обновление не удалось - делаем задержку
+        const delay = baseDelay * Math.pow(2, attempt); // Экспоненциальная задержка
+        console.log(`[TransactionRepo] Повторная попытка блокировки ${hash} через ${delay}мс (попытка ${attempt+1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } catch (error) {
+        console.error(`[TransactionRepo] Общая ошибка при блокировке транзакции ${hash} (попытка ${attempt+1}/${maxRetries}): ${(error as Error).message}`);
+        
+        // Делаем задержку перед следующей попыткой
+        const delay = baseDelay * Math.pow(2, attempt); // Экспоненциальная задержка
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
-      
-      return lockSuccessful;
-    } catch (error) {
-      console.error(`[TransactionRepo] Ошибка при блокировке транзакции ${hash}: ${(error as Error).message}`);
-      return false;
     }
+    
+    // Если после всех попыток не удалось заблокировать - возвращаем false
+    console.error(`[TransactionRepo] Не удалось заблокировать транзакцию ${hash} после ${maxRetries} попыток`);
+    return false;
   }
 
   /**
@@ -139,95 +164,209 @@ export class TransactionRepository {
    * @returns true если разблокировка успешна
    */
   async unlockTransaction(hash: string, errorMessage?: string): Promise<boolean> {
-    try {
-      const tx = await this.findByHash(hash);
-      if (!tx) return false;
-      
-      // Всегда устанавливаем статус 'failed' при разблокировке
-      // Если сообщение об ошибке не указано, используем стандартное
-      const finalErrorMessage = errorMessage || 'ERR_INTERRUPTED: Обработка транзакции была прервана';
-      const previousStatus = tx.status;
-      
-      await this.repository.update(
-        { hash, status: 'processing' }, // Разблокируем только если статус 'processing'
-        { 
-          status: 'failed',
-          errorMessage: finalErrorMessage
+    // Максимальное количество попыток
+    const maxRetries = 10;
+    // Базовая задержка (в миллисекундах)
+    const baseDelay = 300;
+    
+    // Всегда устанавливаем статус 'failed' при разблокировке
+    // Если сообщение об ошибке не указано, используем стандартное
+    const finalErrorMessage = errorMessage || 'ERR_INTERRUPTED: Обработка транзакции была прервана';
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const tx = await this.findByHash(hash);
+        if (!tx) return false;
+        
+        const previousStatus = tx.status;
+        
+        // Если транзакция не в статусе 'processing', нет смысла разблокировать
+        if (tx.status !== 'processing') {
+          console.log(`[TransactionRepo] Транзакция ${hash} уже не находится в статусе 'processing', текущий статус: ${tx.status}`);
+          return false;
         }
-      );
-      
-      console.log(`[TransactionRepo] Транзакция ${hash} разблокирована со статусом 'failed', ошибка: ${finalErrorMessage}`);
-      
-      // Добавляем запись в историю
-      await this.historyRepository.addHistoryRecord(
-        hash,
-        TransactionActions.UNLOCKED,
-        'failed',
-        previousStatus,
-        finalErrorMessage
-      );
-      
-      return true;
-    } catch (error) {
-      console.error(`[TransactionRepo] Ошибка при разблокировке транзакции ${hash}: ${(error as Error).message}`);
-      return false;
+        
+        // Выполняем запрос в блоке try-catch для перехвата ошибок блокировки
+        try {
+          await this.repository.update(
+            { hash, status: 'processing' }, // Разблокируем только если статус 'processing'
+            { 
+              status: 'failed',
+              errorMessage: finalErrorMessage
+            }
+          );
+          
+          // Проверяем, действительно ли статус обновился
+          const updatedTx = await this.findByHash(hash);
+          if (updatedTx && updatedTx.status === 'failed') {
+            console.log(`[TransactionRepo] Транзакция ${hash} разблокирована со статусом 'failed', ошибка: ${finalErrorMessage}`);
+            
+            // Добавляем запись в историю с механизмом повторных попыток
+            await this.addHistoryRecordWithRetry(
+              hash,
+              TransactionActions.UNLOCKED,
+              'failed',
+              previousStatus,
+              finalErrorMessage
+            );
+            
+            return true;
+          }
+        } catch (dbError) {
+          console.error(`[TransactionRepo] Ошибка DB при разблокировке транзакции ${hash} (попытка ${attempt+1}/${maxRetries}): ${(dbError as Error).message}`);
+        }
+        
+        // Если мы дошли до этой точки, значит обновление не удалось - делаем задержку перед следующей попыткой
+        const delay = baseDelay * Math.pow(2, attempt); // Экспоненциальная задержка
+        console.log(`[TransactionRepo] Повторная попытка разблокировки ${hash} через ${delay}мс (попытка ${attempt+1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } catch (error) {
+        console.error(`[TransactionRepo] Общая ошибка при разблокировке транзакции ${hash} (попытка ${attempt+1}/${maxRetries}): ${(error as Error).message}`);
+        
+        // Делаем задержку перед следующей попыткой
+        const delay = baseDelay * Math.pow(2, attempt); // Экспоненциальная задержка
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
+    
+    // Если после всех попыток не удалось разблокировать - возвращаем false
+    console.error(`[TransactionRepo] Не удалось разблокировать транзакцию ${hash} после ${maxRetries} попыток`);
+    return false;
+  }
+  
+  /**
+   * Вспомогательный метод для добавления записи в историю с механизмом повторных попыток
+   */
+  private async addHistoryRecordWithRetry(
+    transactionHash: string,
+    action: TransactionActions,
+    newStatus: string,
+    previousStatus?: string,
+    message?: string,
+    data?: Record<string, any>
+  ): Promise<boolean> {
+    const maxRetries = 5;
+    const baseDelay = 300;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await this.historyRepository.addHistoryRecord(
+          transactionHash,
+          action,
+          newStatus,
+          previousStatus,
+          message,
+          data
+        );
+        return true;
+      } catch (error) {
+        console.error(`[TransactionRepo] Ошибка при добавлении записи в историю для ${transactionHash} (попытка ${attempt+1}/${maxRetries}): ${(error as Error).message}`);
+        
+        // Делаем задержку перед следующей попыткой
+        const delay = baseDelay * Math.pow(2, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    console.error(`[TransactionRepo] Не удалось добавить запись в историю для ${transactionHash} после ${maxRetries} попыток`);
+    return false;
   }
 
   /**
    * Добавление новой транзакции в базу данных
    */
   async saveTransaction(transaction: TonTransactionData, username?: string, starsAmount?: number): Promise<Transaction> {
-    const newTransaction = new Transaction();
-    newTransaction.hash = transaction.hash;
-    newTransaction.amount = transaction.amount;
-    newTransaction.senderAddress = transaction.senderAddress || null;
-    newTransaction.comment = transaction.comment || null;
-    newTransaction.username = username || null;
-    newTransaction.starsAmount = starsAmount || null;
-    newTransaction.status = transaction.status || 'processed';
+    // Максимальное количество попыток для операций с базой
+    const maxRetries = 10;
+    const baseDelay = 300;
     
-    // Добавляем новые поля
-    newTransaction.gasFee = transaction.gasFee || null;
-    newTransaction.amountAfterGas = transaction.amountAfterGas || null;
-    newTransaction.exchangeRate = transaction.exchangeRate || null;
-    
-    // Если есть сообщение о статусе, сохраняем его как сообщение об ошибке
-    if (transaction.statusMsg) {
-      newTransaction.errorMessage = transaction.statusMsg;
-    }
-
-    const savedTransaction = await this.repository.save(newTransaction);
-    
-    // Добавляем запись в историю
-    const isNewTransaction = !(await this.exists(transaction.hash));
-    if (isNewTransaction) {
-      await this.historyRepository.addHistoryRecord(
-        transaction.hash,
-        TransactionActions.CREATED,
-        newTransaction.status,
-        undefined,
-        newTransaction.errorMessage || `Транзакция создана${username ? ` для пользователя @${username}` : ''}`,
-        {
-          amount: transaction.amount,
-          starsAmount,
-          gasFee: transaction.gasFee,
-          amountAfterGas: transaction.amountAfterGas,
-          exchangeRate: transaction.exchangeRate
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const newTransaction = new Transaction();
+        newTransaction.hash = transaction.hash;
+        newTransaction.amount = transaction.amount;
+        newTransaction.senderAddress = transaction.senderAddress || null;
+        newTransaction.comment = transaction.comment || null;
+        newTransaction.username = username || null;
+        newTransaction.starsAmount = starsAmount || null;
+        newTransaction.status = transaction.status || 'processed';
+        
+        // Добавляем новые поля
+        newTransaction.gasFee = transaction.gasFee || null;
+        newTransaction.amountAfterGas = transaction.amountAfterGas || null;
+        newTransaction.exchangeRate = transaction.exchangeRate || null;
+        
+        // Если есть сообщение о статусе, сохраняем его как сообщение об ошибке
+        if (transaction.statusMsg) {
+          newTransaction.errorMessage = transaction.statusMsg;
         }
-      );
-    } else {
-      // Если транзакция уже существовала, это обновление
-      await this.historyRepository.addHistoryRecord(
-        transaction.hash,
-        TransactionActions.STATUS_CHANGED,
-        newTransaction.status,
-        undefined,
-        newTransaction.errorMessage || `Статус транзакции обновлен на ${newTransaction.status}`
-      );
+
+        // Проверяем, существует ли уже транзакция с таким хешем
+        const isNewTransaction = !(await this.exists(transaction.hash));
+        
+        // Сохраняем транзакцию
+        let savedTransaction;
+        try {
+          savedTransaction = await this.repository.save(newTransaction);
+        } catch (dbError) {
+          const errorMsg = (dbError as Error).message;
+          console.error(`[TransactionRepo] Ошибка DB при сохранении транзакции ${transaction.hash} (попытка ${attempt+1}/${maxRetries}): ${errorMsg}`);
+          
+          // Если ошибка связана с блокировкой базы данных или конфликтом SAVEPOINT,
+          // делаем задержку и пробуем снова
+          if (errorMsg.includes('SQLITE_BUSY') || errorMsg.includes('SQLITE_ERROR: near')) {
+            const delay = baseDelay * Math.pow(2, attempt);
+            console.log(`[TransactionRepo] Ожидание ${delay}мс перед повторной попыткой сохранения транзакции ${transaction.hash}`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          } else {
+            // Если ошибка не связана с блокировкой, пробрасываем её
+            throw dbError;
+          }
+        }
+        
+        // Добавляем запись в историю
+        if (isNewTransaction) {
+          await this.addHistoryRecordWithRetry(
+            transaction.hash,
+            TransactionActions.CREATED,
+            newTransaction.status,
+            undefined,
+            newTransaction.errorMessage || `Транзакция создана${username ? ` для пользователя @${username}` : ''}`,
+            {
+              amount: transaction.amount,
+              starsAmount,
+              gasFee: transaction.gasFee,
+              amountAfterGas: transaction.amountAfterGas,
+              exchangeRate: transaction.exchangeRate
+            }
+          );
+        } else {
+          // Если транзакция уже существовала, это обновление
+          await this.addHistoryRecordWithRetry(
+            transaction.hash,
+            TransactionActions.STATUS_CHANGED,
+            newTransaction.status,
+            undefined,
+            newTransaction.errorMessage || `Статус транзакции обновлен на ${newTransaction.status}`
+          );
+        }
+        
+        return savedTransaction;
+      } catch (error) {
+        console.error(`[TransactionRepo] Общая ошибка при сохранении транзакции ${transaction.hash} (попытка ${attempt+1}/${maxRetries}): ${(error as Error).message}`);
+        
+        // Если это не последняя попытка, ждем и пробуем снова
+        if (attempt < maxRetries - 1) {
+          const delay = baseDelay * Math.pow(2, attempt);
+          console.log(`[TransactionRepo] Ожидание ${delay}мс перед повторной попыткой сохранения транзакции ${transaction.hash}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
     }
     
-    return savedTransaction;
+    // Если все попытки не удались, генерируем ошибку
+    throw new Error(`Не удалось сохранить транзакцию ${transaction.hash} после ${maxRetries} попыток`);
   }
 
   /**

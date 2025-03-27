@@ -1,11 +1,13 @@
 import { TonWalletService } from '../wallet/TonWalletService';
 import { FragmentStarsPurchaseService } from './fragmentStarsPurchaseService';
 import { TransactionRepository } from '../database/repositories/transaction.repository';
+import { TransactionHistoryRepository } from '../database/repositories/transaction-history.repository';
+import { AppDataSource } from '../database';
+import { TransactionType, WalletTransaction } from '../wallet/models/walletModels';
+import { TRANSACTION_MONITOR_CONFIG } from '../config';
+import { Transaction } from '../database/entities/transaction.entity';
 import fs from 'fs';
 import path from 'path';
-import { TRANSACTION_MONITOR_CONFIG } from '../config';
-import { WalletTransaction } from '../wallet/models/walletModels';
-import { TransactionType } from '../wallet/models/walletModels';
 
 /**
  * Сервис для мониторинга транзакций TON и автоматической покупки звезд
@@ -49,11 +51,37 @@ export class TonTransactionMonitor {
     // Start initial check immediately
     this.checkNewTransactions();
     
+    // Запускаем диагностику застрявших транзакций
+    this.diagnoseStuckTransactions()
+      .then(result => {
+        console.log(`[Monitor] Начальная диагностика застрявших транзакций: ${JSON.stringify(result, null, 2)}`);
+      })
+      .catch(error => {
+        console.error(`[Monitor] Ошибка при начальной диагностике: ${error.message}`);
+      });
+    
     // Start periodic check
     this.interval = setInterval(
       () => this.checkNewTransactions(), 
       TRANSACTION_MONITOR_CONFIG.CHECK_INTERVAL_MS
     );
+    
+    // Запускаем периодическую диагностику застрявших транзакций
+    // с интервалом в 2 раза больше обычного интервала проверки
+    setInterval(() => {
+      if (!this.isRunning) return;
+      
+      this.diagnoseStuckTransactions()
+        .then(result => {
+          if (result.stuck > 0) {
+            console.log(`[Monitor] Диагностика обнаружила ${result.stuck} застрявших транзакций`);
+            console.log(`[Monitor] Подробности: ${JSON.stringify(result.transactions, null, 2)}`);
+          }
+        })
+        .catch(error => {
+          console.error(`[Monitor] Ошибка при диагностике застрявших транзакций: ${error.message}`);
+        });
+    }, TRANSACTION_MONITOR_CONFIG.CHECK_INTERVAL_MS * 2);
   }
   
   /**
@@ -198,18 +226,26 @@ export class TonTransactionMonitor {
           const updatedAt = existingTransaction.updatedAt;
           const timeInProcessing = now.getTime() - updatedAt.getTime();
           
+          // Логируем подробности для диагностики
+          console.log(`[Monitor] Транзакция ${hash} в статусе processing ${(timeInProcessing / (60 * 1000)).toFixed(1)} минут. Таймаут: ${(TRANSACTION_MONITOR_CONFIG.PROCESSING_TIMEOUT_MS / (60 * 1000)).toFixed(1)} минут`);
+          
           // Если транзакция "зависла" в processing дольше заданного времени
-          if (timeInProcessing > TRANSACTION_MONITOR_CONFIG.PROCESSING_TIMEOUT_MS) {
+          if (timeInProcessing >= TRANSACTION_MONITOR_CONFIG.PROCESSING_TIMEOUT_MS) {
             console.log(`[Monitor] Транзакция ${hash} зависла в состоянии processing на ${(timeInProcessing / (60 * 1000)).toFixed(1)} минут, пробуем обработать повторно`);
             
             // Пытаемся разблокировать транзакцию с ошибкой тайм-аута
-            await this.transactionRepository.unlockTransaction(
+            const unlockResult = await this.transactionRepository.unlockTransaction(
               hash, 
               `ERR_PROCESSING_TIMEOUT: Транзакция зависла в статусе processing на ${(timeInProcessing / (60 * 1000)).toFixed(1)} минут`
             );
             
-            // Можно сразу продолжить обработку или вернуться, чтобы транзакция была обработана в следующем цикле
-            // Выбираем продолжить, чтобы сразу обработать
+            if (!unlockResult) {
+              console.log(`[Monitor] Не удалось разблокировать зависшую транзакцию ${hash}, возможно она была разблокирована другим процессом`);
+              return;
+            }
+            
+            console.log(`[Monitor] Транзакция ${hash} успешно разблокирована, продолжаем обработку`);
+            // Продолжаем выполнение кода (не делаем return), чтобы перезапустить обработку транзакции
           } else {
             console.log(`[Monitor] Скипуем транзакцию в обработке: ${hash} (${(timeInProcessing / (60 * 1000)).toFixed(1)} минут в статусе processing)`);
             return;
@@ -526,25 +562,36 @@ export class TonTransactionMonitor {
   }
   
   /**
-   * Получение всех обработанных транзакций
+   * Получение всех последних транзакций с пагинацией
    */
-  public async getAllTransactions(page: number = 1, limit: number = 20): Promise<any> {
-    return await this.transactionRepository.getRecentTransactions(page, limit);
+  public async getAllTransactions(page: number = 1, limit: number = 20): Promise<{ data: Transaction[], total: number }> {
+    const [transactions, count] = await this.transactionRepository.getRecentTransactions(page, limit);
+    return {
+      data: transactions,
+      total: count
+    };
   }
   
   /**
-   * Получение транзакций с исправимыми ошибками, которые можно повторно обработать
-   * Заменяет предыдущий метод getPendingTransactions
+   * Получение транзакций с ошибками, которые можно повторить
    */
-  public async getRetryableFailedTransactions(page: number = 1, limit: number = 20): Promise<any> {
-    return await this.transactionRepository.getRetryableFailedTransactions(page, limit);
+  public async getRetryableFailedTransactions(page: number = 1, limit: number = 20): Promise<{ data: Transaction[], total: number }> {
+    const [transactions, count] = await this.transactionRepository.getRetryableFailedTransactions(page, limit);
+    return {
+      data: transactions,
+      total: count
+    };
   }
   
   /**
    * Получение всех обработанных транзакций
    */
-  public async getProcessedTransactions(page: number = 1, limit: number = 20): Promise<any> {
-    return await this.transactionRepository.getTransactionsByStatus('processed', page, limit);
+  public async getProcessedTransactions(page: number = 1, limit: number = 20): Promise<{ data: Transaction[], total: number }> {
+    const [transactions, count] = await this.transactionRepository.getTransactionsByStatus('processed', page, limit);
+    return {
+      data: transactions,
+      total: count
+    };
   }
   
   /**
@@ -559,5 +606,67 @@ export class TonTransactionMonitor {
    */
   public async getTransactionHistory(hash: string): Promise<any> {
     return await this.transactionRepository.getTransactionHistory(hash);
+  }
+  
+  /**
+   * Диагностика проблем с транзакциями, находящимися в статусе processing
+   */
+  public async diagnoseStuckTransactions(): Promise<any> {
+    try {
+      console.log('[Monitor] Запуск диагностики застрявших транзакций...');
+      
+      // Получаем все транзакции в статусе processing
+      const [transactions, count] = await this.transactionRepository.getTransactionsByStatus('processing', 1, 100);
+      
+      if (transactions.length === 0) {
+        console.log('[Monitor] Застрявших транзакций не обнаружено');
+        return { stuck: 0, message: 'Застрявших транзакций не обнаружено' };
+      }
+      
+      console.log(`[Monitor] Обнаружено ${transactions.length} застрявших транзакций`);
+      
+      // Проверяем каждую транзакцию
+      let diagnosisResults = [];
+      
+      for (const tx of transactions) {
+        const now = new Date();
+        const updatedAt = new Date(tx.updatedAt);
+        const timeInProcessing = now.getTime() - updatedAt.getTime();
+        const minutesInProcessing = timeInProcessing / (60 * 1000);
+        
+        // Получаем историю транзакции
+        const history = await this.transactionRepository.getTransactionHistory(tx.hash);
+        
+        // Проверяем таймаут
+        const isTimedOut = timeInProcessing >= TRANSACTION_MONITOR_CONFIG.PROCESSING_TIMEOUT_MS;
+        
+        diagnosisResults.push({
+          hash: tx.hash,
+          timeInProcessing: `${minutesInProcessing.toFixed(1)} минут`,
+          isTimedOut,
+          historyRecordsCount: history.length,
+          updatedAt: updatedAt.toISOString(),
+          status: tx.status
+        });
+        
+        // Если транзакция превысила таймаут, автоматически разблокируем её
+        if (isTimedOut) {
+          console.log(`[Monitor] Автоматическая разблокировка зависшей транзакции ${tx.hash} (${minutesInProcessing.toFixed(1)} минут в processing)`);
+          
+          await this.transactionRepository.unlockTransaction(
+            tx.hash,
+            `ERR_PROCESSING_TIMEOUT: Транзакция автоматически разблокирована после ${minutesInProcessing.toFixed(1)} минут в статусе processing`
+          );
+        }
+      }
+      
+      return {
+        stuck: transactions.length,
+        transactions: diagnosisResults
+      };
+    } catch (error) {
+      console.error(`[Monitor] Ошибка при диагностике застрявших транзакций: ${(error as Error).message}`);
+      return { error: (error as Error).message };
+    }
   }
 } 

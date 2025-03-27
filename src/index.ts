@@ -3,6 +3,7 @@
  */
 
 import app from './server';
+import { AppDataSource, initializeDatabase } from './database';
 
 // Экспортируем сервер
 export { app };
