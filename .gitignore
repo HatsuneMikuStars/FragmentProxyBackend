@@ -7,9 +7,6 @@ yarn-error.log
 # Compiled output
 dist/
 
-# Config files with sensitive data
-src/config.ts
-
 # Environment variables
 .env
 .env.*
