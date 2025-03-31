@@ -149,6 +149,12 @@ export interface GetTransactionsParams {
    * Тип транзакций для фильтрации (входящие/исходящие)
    */
   type?: TransactionType;
+  
+  /**
+   * Unix timestamp начала периода для фильтрации транзакций
+   * Возвращаются только транзакции с timestamp >= startTimestamp
+   */
+  startTimestamp?: number;
 }
 
 /**

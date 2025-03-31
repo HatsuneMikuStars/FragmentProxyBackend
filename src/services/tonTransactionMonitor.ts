@@ -107,26 +107,32 @@ export class TonTransactionMonitor {
    */
   private async checkNewTransactions(): Promise<void> {
     try {
-      // Получаем транзакции напрямую из WalletService
-      const newTransactions = await this.walletService.getTransactions({
+      // Получаем timestamp 24 часа назад
+      const last24Hours = new Date();
+      last24Hours.setHours(last24Hours.getHours() - 24);
+      const last24HoursTimestamp = Math.floor(last24Hours.getTime() / 1000);
+      
+      // Получаем транзакции напрямую из WalletService с фильтрацией за последние 24 часа
+      const recentTransactions = await this.walletService.getTransactions({
         limit: 20,
         archival: true, // Используем архивные ноды для полной истории
-        type: TransactionType.INCOMING // Только входящие транзакции
+        type: TransactionType.INCOMING, // Только входящие транзакции
+        startTimestamp: last24HoursTimestamp // Только транзакции за последние 24 часа
       });
       
-      if (newTransactions.length > 0) {
-        console.log(`[Monitor] Found ${newTransactions.length} transactions`);
+      if (recentTransactions.length > 0) {
+        console.log(`[Monitor] Found ${recentTransactions.length} transactions for the last 24 hours (since ${new Date(last24HoursTimestamp * 1000).toISOString()})`);
       }
       
-      // Обрабатываем каждую новую транзакцию
-      for (const tx of newTransactions) {
+      // Обрабатываем каждую транзакцию за последние 24 часа
+      for (const tx of recentTransactions) {
         await this.processTransaction(tx);
       }
       
       // Обновляем время последней проверки
       this.lastCheckTimestamp = Date.now();
     } catch (error) {
-      console.error(`[Monitor] Error checking transactions`);
+      console.error(`[Monitor] Error checking transactions: ${(error as Error).message}`);
     }
   }
   
