@@ -443,6 +443,8 @@ export class TonWalletService implements IWalletService {
       const archival = params.archival || false;
       // Получаем тип из параметров
       const type = params.type;
+      // Получаем timestamp начала фильтрации
+      const startTimestamp = params.startTimestamp;
       
       // Получаем транзакции с архивного сервера, если нужно
       const transactions = await this.client.getTransactions(address, {
@@ -456,9 +458,14 @@ export class TonWalletService implements IWalletService {
       // Преобразуем транзакции в наш формат
       let result = transactions.map(tx => this.convertTonTransaction(tx));
       
-      // После маппинга транзакций добавляем фильтрацию
+      // Фильтрация по типу
       if (type) {
         result = result.filter(tx => tx.type === type);
+      }
+      
+      // Фильтрация по времени
+      if (startTimestamp) {
+        result = result.filter(tx => tx.timestamp >= startTimestamp);
       }
       
       return result;

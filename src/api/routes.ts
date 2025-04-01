@@ -2,6 +2,10 @@ import { Router, Request, Response } from 'express';
 import { TonWalletService } from '../wallet/TonWalletService';
 import { TransactionRepository } from '../database/repositories/transaction.repository';
 import { AppDataSource } from '../database';
+import { StarsPriceCalculatorService } from '../services/starsPriceCalculatorService';
+import { FragmentStarsPurchaseService } from '../services/fragmentStarsPurchaseService';
+import { FragmentApiClient } from '../apiClient/fragmentApiClient';
+import { FRAGMENT_CONFIG } from '../config';
 
 const router = Router();
 
@@ -97,6 +101,83 @@ router.get('/transactions', (async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('[API] Ошибка при получении списка транзакций:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Внутренняя ошибка сервера'
+    });
+  }
+}) as any);
+
+// Получение стоимости звезд в TON и USD
+router.get('/stars/price', (async (req: Request, res: Response) => {
+  try {
+    // Получаем количество звезд из запроса
+    const starsAmount = parseInt(req.query.amount as string);
+    
+    // Получаем сервис для покупки звезд из приложения или создаем новый
+    let starsPurchaseService = req.app.get('starsPurchaseService') as FragmentStarsPurchaseService;
+    
+    // Если сервис не был инициализирован в приложении, создаем его
+    if (!starsPurchaseService) {
+      console.log('[API] StarsPurchaseService not found in app, creating new instance');
+      
+      // Создаем клиент API Fragment
+      const fragmentClient = new FragmentApiClient(
+        FRAGMENT_CONFIG.COOKIES,
+        FRAGMENT_CONFIG.BASE_URL,
+        FRAGMENT_CONFIG.API_HASH
+      );
+      
+      // Создаем новый экземпляр сервиса (с минимально необходимыми параметрами)
+      starsPurchaseService = new FragmentStarsPurchaseService(
+        FRAGMENT_CONFIG.COOKIES,
+        '', // address - не используется для получения курса
+        '', // publicKey - не используется для получения курса
+        '', // stateInit - не используется для получения курса
+        FRAGMENT_CONFIG.BASE_URL,
+        {},
+        undefined // tonWalletService - не используется для получения курса
+      );
+    }
+    
+    // Создаем калькулятор стоимости звезд
+    const starsPriceCalculator = new StarsPriceCalculatorService(starsPurchaseService);
+    
+    // Получаем стоимость звезд
+    const priceResult = await starsPriceCalculator.calculateStarsPrice(starsAmount);
+    
+    // Проверяем на ошибки
+    if (priceResult.error) {
+      return res.status(400).json({
+        success: false,
+        error: priceResult.error,
+        data: priceResult
+      });
+    }
+    
+    // Возвращаем результаты клиенту
+    return res.json({
+      success: true,
+      data: {
+        ...priceResult,
+        // Округляем значения для удобства отображения
+        tonPrice: parseFloat(priceResult.tonPrice.toFixed(6)),
+        gasFee: parseFloat(priceResult.gasFee.toFixed(6)),
+        totalTonPrice: parseFloat(priceResult.totalTonPrice.toFixed(6)),
+        usdPrice: priceResult.usdPrice !== null 
+          ? parseFloat(priceResult.usdPrice.toFixed(2)) 
+          : null,
+        totalUsdPrice: priceResult.totalUsdPrice !== null 
+          ? parseFloat(priceResult.totalUsdPrice.toFixed(2)) 
+          : null,
+        tonToUsdRate: priceResult.tonToUsdRate !== null 
+          ? parseFloat(priceResult.tonToUsdRate.toFixed(2)) 
+          : null,
+        starsPerTon: parseFloat(priceResult.starsPerTon.toFixed(2))
+      }
+    });
+  } catch (error) {
+    console.error('[API] Ошибка при расчете стоимости звезд:', error);
     return res.status(500).json({
       success: false,
       error: 'Внутренняя ошибка сервера'
