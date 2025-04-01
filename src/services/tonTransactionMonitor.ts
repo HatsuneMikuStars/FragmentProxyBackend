@@ -277,6 +277,22 @@ export class TonTransactionMonitor {
             return;
           }
           
+          // Проверяем, была ли уже отправка звезд ранее (по наличию outgoingTransactionHash)
+          if (existingTransaction.outgoingTransactionHash) {
+            console.log(`[Monitor] Скипуем проваленную транзакцию, которая уже отправляла звезды: ${hash}, outgoingHash: ${existingTransaction.outgoingTransactionHash}`);
+            
+            // Меняем статус на processed, чтобы предотвратить повторную обработку
+            await this.transactionRepository.updateTransactionAfterStarsPurchase(
+              hash,
+              existingTransaction.outgoingTransactionHash,
+              existingTransaction.fragmentTransactionHash || existingTransaction.outgoingTransactionHash,
+              true, // отмечаем как успешную
+              'ERR_ALREADY_PROCESSED: Транзакция уже отправляла звезды ранее'
+            );
+            
+            return;
+          }
+          
           console.log(`[Monitor] Повторяем проваленную транзакцию с потенциально исправимой ошибкой: ${hash}, ошибка: ${errorMessage}`);
         }
         

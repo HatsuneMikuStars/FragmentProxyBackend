@@ -87,6 +87,17 @@ export class TransactionRepository {
           return false;
         }
         
+        // Если у транзакции уже есть outgoingTransactionHash, значит она уже отправляла средства
+        // Предотвращаем повторную обработку таких транзакций
+        if (tx.outgoingTransactionHash) {
+          console.log(`[TransactionRepo] Транзакция ${hash} уже отправляла средства (outgoingTransactionHash=${tx.outgoingTransactionHash}), блокировка не требуется`);
+          // Обновляем статус на processed для предотвращения повторной обработки
+          tx.status = 'processed';
+          tx.errorMessage = 'ERR_ALREADY_PROCESSED: Транзакция уже отправляла средства ранее';
+          await this.repository.save(tx);
+          return false;
+        }
+        
         // Если транзакция имеет статус 'failed', проверим категорию ошибки
         if (tx.status === 'failed' && tx.errorMessage) {
           // Неисправимые ошибки, при которых повторная обработка не имеет смысла
@@ -102,6 +113,16 @@ export class TransactionRepository {
             console.log(`[TransactionRepo] Транзакция ${hash} имеет неисправимую ошибку, повторная обработка невозможна`);
             return false;
           }
+          
+          // Транзакция имеет исправимую ошибку, но уже обрабатывается - отмечаем её обработанной
+          // Это предотвратит повторную обработку той же самой транзакции
+          // и решит проблему с двойной отправкой звезд
+          tx.status = 'processed';
+          tx.errorMessage = 'ERR_ALREADY_PROCESSED: Транзакция уже была обработана ранее';
+          await this.repository.save(tx);
+          
+          console.log(`[TransactionRepo] Транзакция ${hash} со статусом failed помечена как обработанная для предотвращения повторной обработки`);
+          return false;
         }
         
         const previousStatus = tx.status;
