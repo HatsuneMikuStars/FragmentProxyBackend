@@ -26,7 +26,10 @@ jobs:
           cache: 'yarn'
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: |
+          yarn install --frozen-lockfile
+          # Install peer dependencies
+          yarn add ton-core@^0.53.0
 
       - name: Build project
         run: yarn build
@@ -121,6 +124,7 @@ jobs:
           cd /opt/fragment-proxy
           echo "Installing dependencies..."
           yarn install --production --frozen-lockfile
+          yarn add ton-core@^0.53.0
           
           # Create systemd service file
           cat > /etc/systemd/system/fragment-proxy.service << 'EOF'
@@ -132,7 +136,7 @@ jobs:
           Type=simple
           User=root
           WorkingDirectory=/opt/fragment-proxy
-          ExecStart=/usr/bin/node /opt/fragment-proxy/program.js
+          ExecStart=/usr/bin/node /opt/fragment-proxy/dist/server.js
           Restart=on-failure
           StandardOutput=journal
           StandardError=journal
