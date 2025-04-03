@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '14'
+          node-version: '20'
           cache: 'yarn'
 
       - name: Install dependencies
@@ -60,30 +60,14 @@ jobs:
           set -e
           
           # Update system packages
-          yum update -y
-          yum install -y curl make gcc-c++ kernel-devel git
+          apt-get update -y
+          apt-get install -y curl build-essential git
           
-          # Install NVM (Node Version Manager) for the root user
-          if [ ! -d "/root/.nvm" ]; then
-            echo "Installing NVM..."
-            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-          fi
-          
-          # Load NVM for the current shell session
-          export NVM_DIR="/root/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-          
-          # Install Node.js 14 using NVM (compatible with CentOS 7)
-          echo "Installing Node.js 14 using NVM..."
-          nvm install 14
-          nvm use 14
-          nvm alias default 14
-          
-          # Add NVM initialization to root's .bashrc if not already there
-          if ! grep -q "NVM_DIR" /root/.bashrc; then
-            echo 'export NVM_DIR="/root/.nvm"' >> /root/.bashrc
-            echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /root/.bashrc
-            echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"' >> /root/.bashrc
+          # Install Node.js if not present or not version 20+
+          if ! command -v node &> /dev/null || [ $(node -v | cut -d. -f1 | tr -d 'v') -lt 20 ]; then
+            echo "Installing Node.js 20..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            apt-get install -y nodejs
           fi
           
           # Install yarn if not present
@@ -100,10 +84,6 @@ jobs:
           cat > deploy.sh << 'EOL'
           #!/bin/bash
           set -e
-          
-          # Load NVM
-          export NVM_DIR="/root/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
           
           # Check for existing deploy process
           if pgrep -f "setup_server.sh\|deploy.sh" | grep -v $$ > /dev/null; then
@@ -142,7 +122,7 @@ jobs:
           echo "Installing dependencies..."
           yarn install --production --frozen-lockfile
           
-          # Create systemd service file that uses NVM
+          # Create systemd service file
           cat > /etc/systemd/system/fragment-proxy.service << 'EOF'
           [Unit]
           Description=Fragment Proxy Backend Service
@@ -152,10 +132,10 @@ jobs:
           Type=simple
           User=root
           WorkingDirectory=/opt/fragment-proxy
-          ExecStart=/bin/bash -c 'source /root/.nvm/nvm.sh && exec node /opt/fragment-proxy/program.js'
+          ExecStart=/usr/bin/node /opt/fragment-proxy/program.js
           Restart=on-failure
-          StandardOutput=syslog
-          StandardError=syslog
+          StandardOutput=journal
+          StandardError=journal
           SyslogIdentifier=fragment-proxy
           Environment=NODE_ENV=production
           

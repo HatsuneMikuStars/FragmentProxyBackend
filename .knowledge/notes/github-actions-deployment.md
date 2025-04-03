@@ -139,4 +139,33 @@ After realizing that Node.js 16.x might be too old for the codebase (development
 ### Next Steps
 - If deployment with Node.js 14 is successful, evaluate if the application works correctly
 - Consider adding compatibility tests in CI for Node.js 14
-- Long-term, consider upgrading the server to a newer OS version or use containerization 
+- Long-term, consider upgrading the server to a newer OS version or use containerization
+
+## [2023-04-03 18:30] Migration to Ubuntu with Node.js 20
+
+### Server Environment Change
+- Server OS changed from CentOS 7 to Ubuntu, allowing the use of modern Node.js versions
+- Removed all CentOS 7 and compatibility workarounds that were previously necessary
+
+### Deployment Improvements
+1. **Modern Node.js Support**:
+   - Updated deployment workflow to use Node.js 20 (LTS) on both GitHub runner and server
+   - Removed NVM and complex workarounds previously needed for CentOS 7
+
+2. **Package Compatibility**:
+   - Restored helmet to version 8.1.0, which requires Node.js 18+
+   - Eliminated need for downgrading dependencies for compatibility
+
+3. **Logging Improvements**:
+   - Changed service logging from syslog to systemd journal for better log management
+   - Makes troubleshooting easier with journalctl
+
+### Benefits
+- Simpler, more straightforward deployment process
+- Better compatibility with modern npm packages
+- Improved development-production parity (dev uses Node.js 23, production uses 20)
+- Reduced maintenance complexity
+
+### Testing Status
+- Deployment process updated for Ubuntu environment
+- Initial tests pending after configuration updates 
