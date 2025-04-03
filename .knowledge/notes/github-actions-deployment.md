@@ -76,3 +76,45 @@ The workflow has been implemented but requires testing after repository secrets 
 ### Testing Status
 - Initial deployment attempt encountered errors with package management commands
 - Fixed issues and prepared for next deployment test 
+
+## [2023-04-03 16:30] Node.js Version Downgrade for CentOS 7
+
+### Issues Fixed
+1. **Node.js Compatibility with CentOS 7**:
+   - Downgraded Node.js from version 18.x to 16.x for compatibility with CentOS 7's older glibc (2.17)
+   - Updated both GitHub Actions runner and server installation to use Node.js 16.x
+
+### Technical Context
+- CentOS 7 ships with glibc 2.17, which is too old for Node.js 18.x (requires glibc 2.28)
+- Node.js 16.x is the newest LTS version compatible with CentOS 7's system libraries
+- While local development uses Node.js 23.9.0, deployment must use 16.x on the server
+
+### Testing Status
+- Previous deployment attempt failed due to incompatible glibc version
+- Updated configuration should resolve the dependency issues
+
+## [2023-04-03 17:00] Upgrading Node.js Using NVM
+
+### Approach Change
+After realizing that Node.js 16.x might be too old for the codebase (development uses Node.js 23.9.0), we've changed the deployment strategy to use NVM (Node Version Manager) instead of system packages.
+
+### Technical Solution
+1. **NVM Installation**:
+   - Install NVM directly on the server
+   - Use NVM to install Node.js 18 without relying on system libraries (glibc)
+   - Configure .bashrc for NVM autoloading
+
+2. **Service Configuration Updates**:
+   - Modified systemd service to use NVM-managed Node.js
+   - Changed ExecStart to source NVM before executing node
+   - Added explicit service stop before deployment
+
+### Advantages
+- Allows using newer Node.js versions without upgrading the entire OS
+- Provides flexibility to easily change Node.js versions if needed
+- Resolves compatibility issues without code modifications
+- Maintains closer parity between development and production environments
+
+### Security Consideration
+- NVM installation pulls scripts from GitHub, requiring outbound internet access from the server
+- Uses the official NVM installation script with proper verification 
