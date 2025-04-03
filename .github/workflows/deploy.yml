@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '14'
           cache: 'yarn'
 
       - name: Install dependencies
@@ -73,11 +73,11 @@ jobs:
           export NVM_DIR="/root/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
           
-          # Install Node.js 18 using NVM (not dependent on system libraries)
-          echo "Installing Node.js 18 using NVM..."
-          nvm install 18
-          nvm use 18
-          nvm alias default 18
+          # Install Node.js 14 using NVM (compatible with CentOS 7)
+          echo "Installing Node.js 14 using NVM..."
+          nvm install 14
+          nvm use 14
+          nvm alias default 14
           
           # Add NVM initialization to root's .bashrc if not already there
           if ! grep -q "NVM_DIR" /root/.bashrc; then

@@ -117,4 +117,26 @@ After realizing that Node.js 16.x might be too old for the codebase (development
 
 ### Security Consideration
 - NVM installation pulls scripts from GitHub, requiring outbound internet access from the server
-- Uses the official NVM installation script with proper verification 
+- Uses the official NVM installation script with proper verification
+
+## [2023-04-03 17:30] Node.js 14 for CentOS 7 Compatibility
+
+### Issues Fixed
+1. **NVM Node.js Binary Compatibility**:
+   - Further downgraded Node.js from version 18.x to 14.x
+   - Despite using NVM, the Node.js 18 binary still requires newer system libraries
+
+### Technical Context
+- Even when using NVM, the Node.js binary itself has system library dependencies
+- Node.js 14.x is the last LTS version with good compatibility for CentOS 7's glibc 2.17
+- The workflow now uses Node.js 14 for both building and running the application
+
+### Expected Compatibility Challenges
+- TypeScript features used in the codebase may need to be limited to those supported by Node.js 14
+- Some npm packages may have minimum Node.js version requirements above 14
+- Local development on Node.js 23.9.0 may use features not available in 14.x
+
+### Next Steps
+- If deployment with Node.js 14 is successful, evaluate if the application works correctly
+- Consider adding compatibility tests in CI for Node.js 14
+- Long-term, consider upgrading the server to a newer OS version or use containerization 
