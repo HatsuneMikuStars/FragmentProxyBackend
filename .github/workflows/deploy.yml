@@ -60,14 +60,14 @@ jobs:
           set -e
           
           # Update system packages
-          apt-get update -y
-          apt-get install -y curl build-essential
+          yum update -y
+          yum install -y curl make gcc-c++ kernel-devel
           
           # Install Node.js if not present
           if ! command -v node &> /dev/null; then
             echo "Installing Node.js..."
-            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-            apt-get install -y nodejs
+            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+            yum install -y nodejs
           fi
           
           # Install yarn if not present
@@ -127,7 +127,7 @@ jobs:
           Type=simple
           User=root
           WorkingDirectory=/opt/fragment-proxy
-          ExecStart=/usr/bin/node /opt/fragment-proxy/index.js
+          ExecStart=/usr/bin/node /opt/fragment-proxy/program.js
           Restart=on-failure
           StandardOutput=syslog
           StandardError=syslog

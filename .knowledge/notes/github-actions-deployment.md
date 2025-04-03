@@ -60,4 +60,19 @@ To use this workflow, repository secrets need to be configured:
 - ENV_FILE_CONTENT: Complete content of the .env file with all required variables
 
 ### Testing Notes
-The workflow has been implemented but requires testing after repository secrets are configured. 
+The workflow has been implemented but requires testing after repository secrets are configured.
+
+## [2023-04-03 15:30] Deployment Workflow Improvements
+
+### Issues Fixed
+1. **Server OS Compatibility**: 
+   - Changed package management from `apt-get` (Debian/Ubuntu) to `yum` (RHEL/CentOS/Fedora)
+   - Updated Node.js setup script to use RPM-based installation
+
+2. **Service Configuration**:
+   - Corrected the ExecStart path from `/opt/fragment-proxy/index.js` to `/opt/fragment-proxy/program.js`
+   - This matches the actual entry point for the application as used in local development
+
+### Testing Status
+- Initial deployment attempt encountered errors with package management commands
+- Fixed issues and prepared for next deployment test 
