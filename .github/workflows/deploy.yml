@@ -1,0 +1,164 @@
+name: Deploy to Production Server
+
+on:
+  push:
+    branches:
+      - main
+
+# Adding concurrency to cancel previous running workflows
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build project
+        run: yarn build
+
+      - name: Install sshpass
+        run: sudo apt-get install -y sshpass
+
+      - name: Create .env file
+        run: |
+          echo '${{ secrets.ENV_FILE_CONTENT }}' > .env
+        
+      - name: Deploy to server
+        env:
+          SERVER_SSH_PASSWORD: '${{ secrets.SERVER_SSH_PASSWORD }}'
+          SERVER_HOST: '${{ secrets.SERVER_HOST }}'
+          SERVER_SSH_PORT: '${{ secrets.SERVER_SSH_PORT || 22 }}'
+        run: |
+          # Create temporary directory and copy files for archiving
+          mkdir -p /tmp/fragment_proxy_deploy
+          cp -r ./dist ./package.json ./yarn.lock ./.env /tmp/fragment_proxy_deploy/ 2>/dev/null || true
+          
+          # Create a tar archive from the temporary directory
+          cd /tmp
+          tar -czf fragment_proxy.tar.gz -C fragment_proxy_deploy .
+          cp fragment_proxy.tar.gz $GITHUB_WORKSPACE/
+          cd $GITHUB_WORKSPACE
+          
+          # Create setup server script
+          cat > setup_server.sh << 'EOL'
+          #!/bin/bash
+          set -e
+          
+          # Update system packages
+          apt-get update -y
+          apt-get install -y curl build-essential
+          
+          # Install Node.js if not present
+          if ! command -v node &> /dev/null; then
+            echo "Installing Node.js..."
+            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+            apt-get install -y nodejs
+          fi
+          
+          # Install yarn if not present
+          if ! command -v yarn &> /dev/null; then
+            echo "Installing Yarn..."
+            npm install -g yarn
+          fi
+          
+          # Create service directory if it doesn't exist
+          mkdir -p /opt/fragment-proxy
+          EOL
+          
+          # Create deploy script
+          cat > deploy.sh << 'EOL'
+          #!/bin/bash
+          set -e
+          
+          # Check for existing deploy process
+          if pgrep -f "setup_server.sh\|deploy.sh" | grep -v $$ > /dev/null; then
+              echo "Another deploy process detected. Terminating it..."
+              pkill -f "setup_server.sh\|deploy.sh" || true
+              sleep 2
+          fi
+          
+          # Stop the previous instance if running
+          echo "Stopping previous service instance..."
+          if [ -f "/opt/fragment-proxy/service.pid" ]; then
+              OLD_PID=$(cat /opt/fragment-proxy/service.pid)
+              if ps -p $OLD_PID > /dev/null; then
+                  kill $OLD_PID || true
+                  sleep 2
+                  # Force kill if still running
+                  if ps -p $OLD_PID > /dev/null; then
+                      kill -9 $OLD_PID || true
+                      sleep 1
+                  fi
+              fi
+              rm -f /opt/fragment-proxy/service.pid
+          fi
+          
+          # Unpack the archive to the service directory
+          echo "Unpacking application files..."
+          tar -xzf /root/fragment_proxy.tar.gz -C /opt/fragment-proxy
+          
+          # Install dependencies
+          cd /opt/fragment-proxy
+          echo "Installing dependencies..."
+          yarn install --production --frozen-lockfile
+          
+          # Create systemd service file
+          cat > /etc/systemd/system/fragment-proxy.service << 'EOF'
+          [Unit]
+          Description=Fragment Proxy Backend Service
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/fragment-proxy
+          ExecStart=/usr/bin/node /opt/fragment-proxy/index.js
+          Restart=on-failure
+          StandardOutput=syslog
+          StandardError=syslog
+          SyslogIdentifier=fragment-proxy
+          Environment=NODE_ENV=production
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Reload systemd, enable and start the service
+          systemctl daemon-reload
+          systemctl enable fragment-proxy.service
+          systemctl restart fragment-proxy.service
+          
+          # Check if service started successfully
+          sleep 5
+          if systemctl is-active --quiet fragment-proxy.service; then
+              echo "Service started successfully!"
+          else
+              echo "Failed to start service, check logs:"
+              journalctl -u fragment-proxy.service -n 50
+              exit 1
+          fi
+          EOL
+          
+          chmod +x deploy.sh
+          chmod +x setup_server.sh
+          
+          # Transfer files to the server
+          sshpass -p "${SERVER_SSH_PASSWORD}" scp -P "${SERVER_SSH_PORT}" -o StrictHostKeyChecking=no fragment_proxy.tar.gz deploy.sh setup_server.sh root@${SERVER_HOST}:/root/
+          
+          # Execute setup and deploy scripts
+          sshpass -p "${SERVER_SSH_PASSWORD}" ssh -p "${SERVER_SSH_PORT}" -o StrictHostKeyChecking=no root@${SERVER_HOST} "cd /root && chmod +x setup_server.sh && chmod +x deploy.sh && ./setup_server.sh && ./deploy.sh" 
