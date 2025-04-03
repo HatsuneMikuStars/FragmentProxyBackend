@@ -64,7 +64,7 @@ jobs:
           
           # Update system packages
           apt-get update -y
-          apt-get install -y curl build-essential git
+          apt-get install -y curl build-essential git sqlite3
           
           # Install Node.js if not present or not version 20+
           if ! command -v node &> /dev/null || [ $(node -v | cut -d. -f1 | tr -d 'v') -lt 20 ]; then
