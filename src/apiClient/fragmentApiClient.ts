@@ -315,7 +315,7 @@ export class FragmentApiClient {
         let needUpdate = false;
         let returnedMode = mode;
         let responseDh = dh;
-        let state: StarsBuyState | undefined = undefined;
+        const state: StarsBuyState | undefined = undefined;
         
         // Проверяем основные поля ответа
         if ('ok' in responseJson) {
@@ -393,9 +393,9 @@ export class FragmentApiClient {
     let currentMode = this.currentMode || "processing"; // Начинаем сразу с processing
     let currentDh = this.currentDh || "";
     
-    let stableStateCounter = 0;
+    const stableStateCounter = 0;
     let processingCounter = 0;
-    let previousState = "";
+    const previousState = "";
     let lastHtmlContent = "";
     
     // Удаляем принудительный запрос с mode=done, чтобы избежать создания новых сессий

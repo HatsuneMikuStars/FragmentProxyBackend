@@ -648,7 +648,7 @@ export class TonTransactionMonitor {
       console.log(`[Monitor] Обнаружено ${transactions.length} застрявших транзакций`);
       
       // Проверяем каждую транзакцию
-      let diagnosisResults = [];
+      const diagnosisResults = [];
       
       for (const tx of transactions) {
         const now = new Date();
