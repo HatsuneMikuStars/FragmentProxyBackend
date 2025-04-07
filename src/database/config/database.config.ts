@@ -1,4 +1,4 @@
-import { DataSource, DataSourceOptions, TableColumn, Table, NamingStrategyInterface, DefaultNamingStrategy } from 'typeorm';
+import { DataSource, DataSourceOptions, NamingStrategyInterface, DefaultNamingStrategy } from 'typeorm';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { v4 } from 'uuid';
@@ -56,7 +56,8 @@ export const getDatabaseConfig = (): DataSourceOptions => {
   };
 
   // Дополнительные настройки для SQLite
-  if (process.env.DB_TYPE === 'sqlite') {
+  const dbType = process.env.DB_TYPE || '';
+  if (dbType === 'sqlite') {
     return {
       ...baseConfig,
       type: 'sqlite',

@@ -3,19 +3,16 @@
 
 import { FragmentApiClient } from '../apiClient/fragmentApiClient';
 import { 
-  Recipient,
   FragmentApiException,
   WalletAccount
 } from '../apiClient/models/apiModels';
 import {
   PurchaseResult,
-  InsufficientBalanceException,
   PurchaseState,
   PurchaseServiceOptions
 } from './models/purchaseModels';
 import { IWalletService } from '../wallet/IWalletService';
 import { TransactionStatus } from '../wallet/models/walletModels';
-import { TRANSACTION_MONITOR_CONFIG, FRAGMENT_CONFIG } from '../config';
 
 /**
  * Сервис для покупки звезд на платформе Fragment
@@ -130,7 +127,7 @@ export class FragmentStarsPurchaseService {
       const formattedUsername = username.startsWith('@') ? username.substring(1) : username;
       
       // Инициализируем состояние сессии
-      const initialState = await this._fragmentClient.updatePurchaseStateAsync("", "new", "");
+      await this._fragmentClient.updatePurchaseStateAsync("", "new", "");
       console.log(`[Fragment] Сессия с Fragment API инициализирована`);
       
       // ВАЖНО: Сначала ищем пользователя по ID с правильным количеством звезд
@@ -352,7 +349,8 @@ export class FragmentStarsPurchaseService {
       const textDecoder = new TextDecoder('utf-8');
       const result = textDecoder.decode(bytes.slice(17));
       return result;
-    } catch (error) {
+    } catch (decodeError) {
+      console.error('[Fragment] Ошибка при декодировании payload:', decodeError);
       return "[НЕ УДАЛОСЬ ДЕКОДИРОВАТЬ PAYLOAD: " + payloadBase64 + "]";
     }
   }

@@ -1,13 +1,9 @@
 import { TonWalletService } from '../wallet/TonWalletService';
 import { FragmentStarsPurchaseService } from './fragmentStarsPurchaseService';
 import { TransactionRepository } from '../database/repositories/transaction.repository';
-import { TransactionHistoryRepository } from '../database/repositories/transaction-history.repository';
-import { AppDataSource } from '../database';
 import { TransactionType, WalletTransaction } from '../wallet/models/walletModels';
 import { TRANSACTION_MONITOR_CONFIG } from '../config';
 import { Transaction } from '../database/entities/transaction.entity';
-import fs from 'fs';
-import path from 'path';
 
 /**
  * Сервис для мониторинга транзакций TON и автоматической покупки звезд
@@ -619,26 +615,52 @@ export class TonTransactionMonitor {
   /**
    * Получение статистики транзакций
    */
-  public async getTransactionStats(): Promise<any> {
+  public async getTransactionStats(): Promise<{
+    totalCount: number;
+    processedCount: number;
+    processingCount: number;
+    failedCount: number;
+    retryableFailedCount: number;
+    totalStars: number;
+    totalTon: string;
+  }> {
     return await this.transactionRepository.getTransactionStats();
   }
   
   /**
    * Получение истории конкретной транзакции
    */
-  public async getTransactionHistory(hash: string): Promise<any> {
+  public async getTransactionHistory(hash: string): Promise<Array<{
+    timestamp: string;
+    action: string;
+    statusChange: string;
+    message: string | null;
+    data: Record<string, unknown> | null;
+  }>> {
     return await this.transactionRepository.getTransactionHistory(hash);
   }
   
   /**
    * Диагностика проблем с транзакциями, находящимися в статусе processing
    */
-  public async diagnoseStuckTransactions(): Promise<any> {
+  public async diagnoseStuckTransactions(): Promise<{
+    stuck: number;
+    transactions?: Array<{
+      hash: string;
+      timeInProcessing: string;
+      isTimedOut: boolean;
+      historyRecordsCount: number;
+      updatedAt: string;
+      status: string;
+    }>;
+    message?: string;
+    error?: string;
+  }> {
     try {
       console.log('[Monitor] Запуск диагностики застрявших транзакций...');
       
       // Получаем все транзакции в статусе processing
-      const [transactions, count] = await this.transactionRepository.getTransactionsByStatus('processing', 1, 100);
+      const [transactions] = await this.transactionRepository.getTransactionsByStatus('processing', 1, 100);
       
       if (transactions.length === 0) {
         console.log('[Monitor] Застрявших транзакций не обнаружено');
@@ -648,7 +670,7 @@ export class TonTransactionMonitor {
       console.log(`[Monitor] Обнаружено ${transactions.length} застрявших транзакций`);
       
       // Проверяем каждую транзакцию
-      let diagnosisResults = [];
+      const diagnosisResults = [];
       
       for (const tx of transactions) {
         const now = new Date();
@@ -688,7 +710,7 @@ export class TonTransactionMonitor {
       };
     } catch (error) {
       console.error(`[Monitor] Ошибка при диагностике застрявших транзакций: ${(error as Error).message}`);
-      return { error: (error as Error).message };
+      return { stuck: 0, error: (error as Error).message };
     }
   }
 } 

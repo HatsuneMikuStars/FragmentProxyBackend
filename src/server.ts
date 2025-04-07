@@ -2,12 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import apiRoutes from './api/routes';
-import { ENV_CONFIG, TON_WALLET_CONFIG, TON_API_CONFIG, FRAGMENT_CONFIG, TRANSACTION_MONITOR_CONFIG } from './config';
+import { ENV_CONFIG, TON_WALLET_CONFIG, FRAGMENT_CONFIG, TRANSACTION_MONITOR_CONFIG } from './config';
 import { TonWalletService } from './wallet/TonWalletService';
 import { FragmentStarsPurchaseService } from './services/fragmentStarsPurchaseService';
 import { TonTransactionMonitor } from './services/tonTransactionMonitor';
 import { FragmentApiClient } from './apiClient/fragmentApiClient';
-import { initializeDatabase, ensureDatabaseReady, AppDataSource } from './database';
+import { ensureDatabaseReady, AppDataSource } from './database';
 import { TransactionRepository } from './database/repositories/transaction.repository';
 import path from 'path';
 
@@ -39,7 +39,6 @@ app.use('/api', apiRoutes);
 
 // Global service variables
 let tonWalletService: TonWalletService;
-let fragmentApiClient: FragmentApiClient;
 let starsPurchaseService: FragmentStarsPurchaseService;
 let transactionMonitor: TonTransactionMonitor;
 let transactionRepository: TransactionRepository;
@@ -101,21 +100,16 @@ async function startServer() {
     const balance = await tonWalletService.getBalance();
     console.log(`[Server] Wallet balance: ${Number(balance) / 1_000_000_000} TON`);
     
-    // Initialize Fragment API client
-    fragmentApiClient = new FragmentApiClient(
+    // Initialize Fragment API client and save cookies for use in stars purchase service
+    // Note: We're not storing this in a global variable since it's only used during initialization
+    const fragmentApiClient = new FragmentApiClient(
       FRAGMENT_CONFIG.COOKIES,
       FRAGMENT_CONFIG.BASE_URL
     );
     
     // Initialize stars purchase service
-    const account = await tonWalletService.getWalletAccount();
-    starsPurchaseService = new FragmentStarsPurchaseService(
-      FRAGMENT_CONFIG.COOKIES,
-      account.address,
-      account.publicKey,
-      account.walletStateInit,
-      FRAGMENT_CONFIG.BASE_URL,
-      {},
+    starsPurchaseService = await FragmentStarsPurchaseService.createFromWalletService(
+      fragmentApiClient,
       tonWalletService
     );
     

@@ -1,4 +1,4 @@
-import { TonClient, WalletContractV4, beginCell, toNano, internal, Address, SendMode } from '@ton/ton';
+import { TonClient, WalletContractV4, beginCell, internal, Address } from '@ton/ton';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { IWalletService } from './IWalletService';
 import { GetTransactionsParams, SendTransactionParams, TransactionResult, TransactionStatus, TransactionType, WalletConfig, WalletTransaction } from './models/walletModels';
@@ -52,9 +52,10 @@ export class TonWalletService implements IWalletService {
       this.isInitialized = true;
       const walletAddress = await this.getWalletAddress();
       console.log(`[Wallet] Initialized successfully. Address: ${walletAddress}`);
-    } catch (error: any) {
-      console.error('[Wallet] Initialization error:', error.message);
-      throw new Error(`Failed to initialize wallet: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[Wallet] Initialization error:', errorMessage);
+      throw new Error(`Failed to initialize wallet: ${errorMessage}`);
     }
   }
   
@@ -136,14 +137,6 @@ export class TonWalletService implements IWalletService {
           const walletContract = this.client.open(this.wallet);
           const seqno = await walletContract.getSeqno();
           
-          // Create message
-          const msgParams = {
-            to: toAddress,
-            value: amount,
-            bounce: false,
-            sendMode: SendMode.PAY_GAS_SEPARATELY | SendMode.IGNORE_ERRORS
-          };
-          
           // If there's a comment, form message body
           let msgBody;
           if (params.comment) {
@@ -185,9 +178,10 @@ export class TonWalletService implements IWalletService {
               externalMessageCell: Buffer.from(transferBoc).toString('base64')
             }
           };
-        } catch (error: any) {
-          lastError = new Error(error.message || "Unknown error sending transaction");
-          console.error(`[Wallet] Transaction error (attempt ${attempt}/${maxRetries}): ${error.message}`);
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error sending transaction";
+          lastError = new Error(errorMessage);
+          console.error(`[Wallet] Transaction error (attempt ${attempt}/${maxRetries}): ${errorMessage}`);
           
           // If this is the last attempt, throw the error
           if (attempt === maxRetries) {
@@ -203,21 +197,21 @@ export class TonWalletService implements IWalletService {
       
       // If all attempts failed
       throw lastError || new Error('Failed to send transaction after multiple attempts');
-    } catch (error: any) {
-      console.error('[Wallet] Transaction failed:', error.message);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[Wallet] Transaction failed:', errorMessage);
       return {
         success: false,
-        errorMessage: error.message || 'Unknown transaction error'
+        errorMessage: errorMessage || 'Unknown transaction error'
       };
     }
   }
   
   /**
    * Проверяет статус транзакции по её хешу
-   * @param transactionHash Хеш транзакции в base64
    * @returns Статус транзакции
    */
-  async checkTransactionStatus(transactionHash: string): Promise<TransactionStatus> {
+  async checkTransactionStatus(): Promise<TransactionStatus> {
     this.checkInitialization();
     
     try {
@@ -254,7 +248,7 @@ export class TonWalletService implements IWalletService {
     this.checkInitialization();
     
     const startTime = Date.now();
-    let lastStatus = await this.checkTransactionStatus(transactionHash);
+    let lastStatus = await this.checkTransactionStatus();
     
     // Счетчик стабильности для состояния COMPLETED
     let completedCounter = 0;
@@ -278,7 +272,7 @@ export class TonWalletService implements IWalletService {
       await new Promise(resolve => setTimeout(resolve, checkInterval));
       
       // Получаем новый статус
-      lastStatus = await this.checkTransactionStatus(transactionHash);
+      lastStatus = await this.checkTransactionStatus();
       console.log(`Проверка статуса транзакции: ${lastStatus}, счетчик: ${completedCounter}`);
     }
     
@@ -324,26 +318,12 @@ export class TonWalletService implements IWalletService {
    * @param body Тело сообщения
    * @returns Комментарий или undefined
    */
-  private extractCommentFromBody(body: any): string | undefined {
+  private extractCommentFromBody(body: unknown): string | undefined {
     if (!body) return undefined;
-    
-    // Вспомогательная функция для безопасной сериализации объектов с BigInt
-    const safeJsonStringify = (obj: any, space: number = 2): string => {
-      return JSON.stringify(obj, (key, value) => {
-        if (typeof value === 'bigint') {
-          return value.toString() + 'n';
-        }
-        // Не выводим значения Buffer в детальном виде
-        if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
-          return `[Buffer length: ${value.data.length}]`;
-        }
-        return value;
-      }, space);
-    };
     
     try {
       // Способ 1: Стандартный для @ton/ton - комментарий в виде Cell с опкодом 0
-      if (typeof body === 'object' && body !== null && typeof body.beginParse === 'function') {
+      if (typeof body === 'object' && body !== null && 'beginParse' in body && typeof body.beginParse === 'function') {
         const bodySlice = body.beginParse();
         
         if (bodySlice.remainingBits >= 32) {
@@ -360,39 +340,44 @@ export class TonWalletService implements IWalletService {
       // Способ 2: Для сообщений в формате MCP/TON API - комментарий в декодированном теле
       if (typeof body === 'object' && body !== null) {
         // Проверяем наличие decoded_body с полем text (как в ответе MCP)
-        if (body.decoded_body && body.decoded_body.text) {
+        if ('decoded_body' in body && body.decoded_body && typeof body.decoded_body === 'object' && 
+            'text' in body.decoded_body && typeof body.decoded_body.text === 'string') {
           return body.decoded_body.text;
         }
         
         // Проверяем наличие decoded_op_name "text_comment"
-        if (body.decoded_op_name === 'text_comment' && body.decoded_body && body.decoded_body.text) {
+        if ('decoded_op_name' in body && body.decoded_op_name === 'text_comment' && 
+            'decoded_body' in body && body.decoded_body && typeof body.decoded_body === 'object' && 
+            'text' in body.decoded_body && typeof body.decoded_body.text === 'string') {
           return body.decoded_body.text;
         }
         
         // Проверяем наличие body с полем text
-        if (body.body && body.body.text) {
+        if ('body' in body && body.body && typeof body.body === 'object' && 
+            'text' in body.body && typeof body.body.text === 'string') {
           return body.body.text;
         }
         
         // Проверяем наличие текстового комментария в других форматах
-        if (body.text && typeof body.text === 'string') {
+        if ('text' in body && typeof body.text === 'string') {
           return body.text;
         }
         
         // Иногда комментарий может быть в свойстве comment
-        if (body.comment && typeof body.comment === 'string') {
+        if ('comment' in body && typeof body.comment === 'string') {
           return body.comment;
         }
         
         // Проверяем наличие данных в формате base64
-        if (body.data && typeof body.data === 'string') {
+        if ('data' in body && typeof body.data === 'string') {
           try {
             // Пробуем декодировать base64 строку
             const decoded = Buffer.from(body.data, 'base64').toString('utf8');
-            if (decoded && decoded.length > 0 && /^[\x00-\x7F]*$/.test(decoded)) {
+            // Проверяем, что строка содержит только ASCII символы
+            if (decoded && decoded.length > 0 && /^[A-Za-z0-9\s!-~]*$/.test(decoded)) {
               return decoded;
             }
-          } catch (e) {
+          } catch {
             // Если декодирование не удалось, игнорируем ошибку
           }
         }
@@ -405,7 +390,7 @@ export class TonWalletService implements IWalletService {
           if (jsonBody.text || jsonBody.comment || jsonBody.message) {
             return jsonBody.text || jsonBody.comment || jsonBody.message;
           }
-        } catch (e) {
+        } catch {
           // Если парсинг JSON не удался, это не JSON
         }
       }
@@ -414,7 +399,7 @@ export class TonWalletService implements IWalletService {
       if (typeof body === 'string' && body.length > 0) {
         return body;
       }
-    } catch (err) {
+    } catch {
       // Не выводим полную ошибку
       console.warn("Ошибка при извлечении комментария из сообщения");
     }
@@ -497,8 +482,8 @@ export class TonWalletService implements IWalletService {
       // Ищем транзакцию с нужным хешем
       const transaction = transactions.find(tx => tx.id === hash);
       return transaction || null;
-    } catch (error) {
-      console.error(`Ошибка при получении транзакции по хешу ${hash}:`, error);
+    } catch {
+      console.error(`Ошибка при получении транзакции по хешу ${hash}`);
       return null;
     }
   }
@@ -508,7 +493,7 @@ export class TonWalletService implements IWalletService {
    * @param tx Транзакция TON
    * @returns Транзакция в формате WalletTransaction
    */
-  private convertTonTransaction(tx: any): WalletTransaction {
+  private convertTonTransaction(tx: Record<string, unknown>): WalletTransaction {
     const myAddress = this.wallet!.address.toString();
     
     // Определяем тип транзакции (входящая или исходящая)
@@ -519,16 +504,20 @@ export class TonWalletService implements IWalletService {
     let comment: string | undefined;
     
     // Обработка входящего сообщения
-    const inMessage = tx.inMessage;
-    if (inMessage && inMessage.info && inMessage.info.type === 'internal' && inMessage.info.src) {
+    const inMessage = tx.inMessage as Record<string, unknown> | undefined;
+    if (inMessage && inMessage.info && typeof inMessage.info === 'object' && 
+        'type' in inMessage.info && inMessage.info.type === 'internal' && 
+        'src' in inMessage.info && inMessage.info.src) {
       // Входящий перевод
       type = TransactionType.INCOMING;
       fromAddress = inMessage.info.src.toString();
       toAddress = myAddress;
       
       // Преобразуем сумму в BigInt
-      if (inMessage.info.value && inMessage.info.value.coins) {
-        amount = BigInt(inMessage.info.value.coins);
+      if ('info' in inMessage && typeof inMessage.info === 'object' && 
+          'value' in inMessage.info && typeof inMessage.info.value === 'object' && inMessage.info.value && 
+          'coins' in inMessage.info.value && inMessage.info.value.coins) {
+        amount = BigInt(inMessage.info.value.coins.toString());
       }
       
       // Извлекаем комментарий
@@ -536,18 +525,19 @@ export class TonWalletService implements IWalletService {
     } 
     
     // Обработка исходящих сообщений
-    let outMessages: any[] = [];
+    let outMessages: Array<Record<string, unknown>> = [];
     
     // Преобразуем outMessages в массив для унифицированной обработки
-    if (tx.outMessages) {
+    if ('outMessages' in tx) {
       if (Array.isArray(tx.outMessages)) {
-        outMessages = tx.outMessages;
-      } else if (typeof tx.outMessages.get === 'function') {
+        outMessages = tx.outMessages as Array<Record<string, unknown>>;
+      } else if (tx.outMessages && typeof tx.outMessages === 'object' && 
+                'get' in tx.outMessages && typeof tx.outMessages.get === 'function') {
         // Если это словарь, преобразуем его в массив
         outMessages = [];
         for (let i = 0; i < 10; i++) { // Предполагаем, что максимум 10 сообщений
           const msg = tx.outMessages.get(i);
-          if (msg) outMessages.push(msg);
+          if (msg) outMessages.push(msg as Record<string, unknown>);
           else break;
         }
       }
@@ -558,7 +548,9 @@ export class TonWalletService implements IWalletService {
       // Обрабатываем первое исходящее сообщение (обычно основное для простых переводов)
       const firstOutMsg = outMessages[0];
       
-      if (firstOutMsg && firstOutMsg.info && firstOutMsg.info.type === 'internal' && firstOutMsg.info.dest) {
+      if (firstOutMsg && 'info' in firstOutMsg && typeof firstOutMsg.info === 'object' && firstOutMsg.info && 
+          'type' in firstOutMsg.info && firstOutMsg.info.type === 'internal' && 
+          'dest' in firstOutMsg.info && firstOutMsg.info.dest) {
         // Если нет входящего сообщения или тип уже не определен как входящий,
         // считаем транзакцию исходящей
         if (type !== TransactionType.INCOMING) {
@@ -567,8 +559,10 @@ export class TonWalletService implements IWalletService {
           toAddress = firstOutMsg.info.dest.toString();
           
           // Преобразуем сумму в BigInt
-          if (firstOutMsg.info.value && firstOutMsg.info.value.coins) {
-            amount = BigInt(firstOutMsg.info.value.coins);
+          if ('info' in firstOutMsg && typeof firstOutMsg.info === 'object' && 
+              'value' in firstOutMsg.info && typeof firstOutMsg.info.value === 'object' && firstOutMsg.info.value && 
+              'coins' in firstOutMsg.info.value && firstOutMsg.info.value.coins) {
+            amount = BigInt(firstOutMsg.info.value.coins.toString());
           }
           
           // Извлекаем комментарий
@@ -578,23 +572,26 @@ export class TonWalletService implements IWalletService {
     }
     
     // Вычисляем комиссию
-    const fee = tx.totalFees && tx.totalFees.coins 
-      ? BigInt(tx.totalFees.coins) 
+    const fee = 'totalFees' in tx && typeof tx.totalFees === 'object' && tx.totalFees && 
+          'coins' in tx.totalFees && tx.totalFees.coins 
+      ? BigInt(tx.totalFees.coins.toString()) 
       : BigInt(0);
     
     // Преобразуем хеш в строку (в зависимости от типа)
     let hashString: string = 'unknown_hash';
     
     try {
-      if (typeof tx.hash === 'function') {
-        hashString = tx.hash();
-      } else if (typeof tx.hash === 'string') {
-        hashString = tx.hash;
-      } else if (tx.hash) {
-        // Для всех остальных случаев просто преобразуем в строку
-        hashString = String(tx.hash);
+      if ('hash' in tx) {
+        if (typeof tx.hash === 'function') {
+          hashString = tx.hash();
+        } else if (typeof tx.hash === 'string') {
+          hashString = tx.hash;
+        } else if (tx.hash) {
+          // Для всех остальных случаев просто преобразуем в строку
+          hashString = String(tx.hash);
+        }
       }
-    } catch (error) {
+    } catch {
       // Уменьшаем детализацию ошибки
       console.warn("Ошибка при преобразовании хеша транзакции");
       hashString = 'hash_error';
@@ -604,8 +601,8 @@ export class TonWalletService implements IWalletService {
     const walletTx: WalletTransaction = {
       id: `${tx.lt}_${hashString}`,
       type,
-      timestamp: tx.now || Math.floor(Date.now() / 1000),
-      lt: String(tx.lt),
+      timestamp: 'now' in tx && typeof tx.now === 'number' ? tx.now : Math.floor(Date.now() / 1000),
+      lt: 'lt' in tx ? String(tx.lt) : '0',
       hash: hashString,
       fromAddress,
       toAddress,
@@ -615,7 +612,7 @@ export class TonWalletService implements IWalletService {
       status: TransactionStatus.COMPLETED, // Все полученные транзакции считаем завершенными
       additionalData: {
         // Дополнительные данные о транзакции могут быть полезны для отладки
-        utime: tx.now
+        utime: 'now' in tx ? tx.now : undefined
       }
     };
     

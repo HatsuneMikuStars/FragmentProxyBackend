@@ -89,7 +89,7 @@ export interface TransactionResult {
   /**
    * Дополнительные данные о транзакции
    */
-  additionalData?: any;
+  additionalData?: Record<string, unknown>;
 }
 
 /**
@@ -219,5 +219,5 @@ export interface WalletTransaction {
   /**
    * Дополнительные данные о транзакции
    */
-  additionalData?: any;
+  additionalData?: Record<string, unknown>;
 } 

@@ -33,7 +33,7 @@ export class TransactionHistoryRepository {
     newStatus: string,
     previousStatus?: string,
     message?: string,
-    data?: Record<string, any>
+    data?: Record<string, unknown>
   ): Promise<TransactionHistory> {
     const historyRecord = new TransactionHistory();
     historyRecord.transactionHash = transactionHash;
@@ -64,7 +64,7 @@ export class TransactionHistoryRepository {
     action: string;
     statusChange: string;
     message: string | null;
-    data: Record<string, any> | null;
+    data: Record<string, unknown> | null;
   }>> {
     const history = await this.getHistoryByTransactionHash(transactionHash);
     
