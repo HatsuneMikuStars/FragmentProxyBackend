@@ -264,7 +264,7 @@ export class TransactionRepository {
     newStatus: string,
     previousStatus?: string,
     message?: string,
-    data?: Record<string, any>
+    data?: Record<string, unknown>
   ): Promise<boolean> {
     const maxRetries = 5;
     const baseDelay = 300;
@@ -435,7 +435,13 @@ export class TransactionRepository {
   /**
    * Получение истории транзакции
    */
-  async getTransactionHistory(hash: string): Promise<any> {
+  async getTransactionHistory(hash: string): Promise<Array<{
+    timestamp: string;
+    action: string;
+    statusChange: string;
+    message: string | null;
+    data: Record<string, unknown> | null;
+  }>> {
     return await this.historyRepository.getFormattedHistory(hash);
   }
 

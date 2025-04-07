@@ -41,7 +41,7 @@ export class TransactionHistory {
    * Дополнительные данные (в JSON)
    */
   @Column({ type: 'json', nullable: true })
-  data: Record<string, any> | null;
+  data: Record<string, unknown> | null;
 
   /**
    * Сообщение (например, ошибки или информационное)
