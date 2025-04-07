@@ -21,7 +21,8 @@ export default [
       '@ton-ai-core/eslint-plugin-suggest-members': fixupPluginRules(tonAiCore),
     },
     rules: {
-      '@ton-ai-core/eslint-plugin-suggest-members/suggest-members': 'warn',
+      '@ton-ai-core/eslint-plugin-suggest-members/suggest-members': 'error',
+      '@ton-ai-core/eslint-plugin-suggest-members/suggest-imports': 'error',
     },
   },
 ]; 
