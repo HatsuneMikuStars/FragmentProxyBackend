@@ -110,7 +110,7 @@ export interface GetBuyStarsLinkResponse {
       payload: string;
     }[];
   };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -121,7 +121,7 @@ export interface WalletAccount {
   chain: string;
   publicKey: string;
   walletStateInit: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -132,7 +132,7 @@ export interface DeviceInfo {
   appName: string;
   appVersion: string;
   maxProtocolVersion: number;
-  features: any[];
+  features: unknown[];
   userAgent?: string;
   mobile?: boolean;
 }

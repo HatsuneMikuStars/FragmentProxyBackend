@@ -3,10 +3,8 @@
 
 import { 
   Recipient, 
-  ButtonInfo, 
   SearchRecipientsResponse, 
   InitBuyStarsResponse, 
-  InitBuyStarsRequestResponse, 
   StarsBuyState, 
   StarsBuyStateApiResponse, 
   UpdatePurchaseStateResponse, 
@@ -393,9 +391,7 @@ export class FragmentApiClient {
     let currentMode = this.currentMode || "processing"; // Начинаем сразу с processing
     let currentDh = this.currentDh || "";
     
-    const stableStateCounter = 0;
     let processingCounter = 0;
-    const previousState = "";
     let lastHtmlContent = "";
     
     // Удаляем принудительный запрос с mode=done, чтобы избежать создания новых сессий
