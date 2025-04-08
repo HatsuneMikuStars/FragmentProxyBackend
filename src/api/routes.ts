@@ -1,19 +1,40 @@
-import { Router, Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { TonWalletService } from '../wallet/TonWalletService';
-import { TransactionRepository } from '../database/repositories/transaction.repository';
-import { AppDataSource } from '../database';
 import { StarsPriceCalculatorService } from '../services/starsPriceCalculatorService';
 import { FragmentStarsPurchaseService } from '../services/fragmentStarsPurchaseService';
 import { FRAGMENT_CONFIG } from '../config';
+import { TonTransactionMonitor } from '../services/tonTransactionMonitor';
+import { Api } from '../apiClient/Api';
 
-const router = Router();
+const router = express.Router();
 
 /**
  * Маршруты для API
  */
 
+// Создаем экземпляр API клиента
+const apiClient = new Api({
+  baseURL: 'http://localhost:5238',
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+// Middleware для проверки наличия монитора транзакций
+const checkMonitor = (req: Request, res: Response, next: NextFunction): void => {
+  const monitor = req.app.get('monitor') as TonTransactionMonitor;
+  if (!monitor) {
+    res.status(500).json({
+      error: 'Monitor not initialized',
+      message: 'Transaction monitor service is not initialized'
+    });
+    return;
+  }
+  next();
+};
+
 // Получение адреса кошелька для отправки TON
-router.get('/wallet-address', function(req: Request, res: Response) {
+router.get('/wallet-address', function(req: express.Request, res: express.Response) {
   try {
     // Получаем глобальную переменную сервиса кошелька из приложения
     const tonWalletService = (req.app.get('tonWalletService') as TonWalletService);
@@ -51,83 +72,55 @@ router.get('/wallet-address', function(req: Request, res: Response) {
 });
 
 // Получение статистики транзакций
-router.get('/transactions/stats', function(req: Request, res: Response) {
+router.get('/stats', checkMonitor, async (req: Request, res: Response): Promise<void> => {
   try {
-    // Создаем репозиторий
-    const transactionRepo = new TransactionRepository(AppDataSource);
+    const { data: transactions } = await apiClient.transactionsList({ page: 1, pageSize: 1000 });
     
-    // Получаем статистику
-    transactionRepo.getTransactionStats().then(stats => {
-      // Возвращаем статистику клиенту
-      res.json({
-        success: true,
-        data: {
-          ...stats,
-          // Добавляем дополнительную информацию
-          averageStarsPerTransaction: stats.totalCount > 0 
-            ? Math.round(stats.totalStars / stats.processedCount) 
-            : 0,
-          successRate: stats.totalCount > 0 
-            ? Math.round((stats.processedCount / stats.totalCount) * 100) 
-            : 0
-        }
-      });
-    }).catch(error => {
-      console.error(`[API] Ошибка при получении статистики: ${(error as Error).message}`);
-      res.status(500).json({
-        success: false,
-        error: `Internal server error: ${(error as Error).message}`
-      });
-    });
+    const stats = {
+      totalCount: transactions.length,
+      processedCount: transactions.filter(tx => tx.status === 2).length,
+      processingCount: transactions.filter(tx => tx.status === 1).length,
+      failedCount: transactions.filter(tx => tx.status === 3).length,
+      totalStars: transactions.reduce((sum, tx) => sum + (tx.starCount || 0), 0),
+      totalTon: transactions.reduce((sum, tx) => sum + (tx.amount || 0), 0).toFixed(9)
+    };
+    
+    res.json(stats);
   } catch (error) {
-    console.error(`[API] Ошибка при получении статистики: ${(error as Error).message}`);
     res.status(500).json({
-      success: false,
-      error: `Internal server error: ${(error as Error).message}`
+      error: 'Failed to get transaction stats',
+      message: (error as Error).message
     });
   }
 });
 
-// Получение последних транзакций
-router.get('/transactions', function(req: Request, res: Response) {
+// Получение списка транзакций с пагинацией
+router.get('/transactions', checkMonitor, async (req: Request, res: Response): Promise<void> => {
   try {
-    // Получаем параметры из запроса
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
     
-    // Создаем репозиторий транзакций
-    const transactionRepository = new TransactionRepository(AppDataSource);
+    const { data: transactions } = await apiClient.transactionsList({
+      page,
+      pageSize: limit
+    });
     
-    // Получаем транзакции с пагинацией
-    transactionRepository.getRecentTransactions(page, limit).then(([transactions, total]) => {
-      res.json({
-        success: true,
-        data: {
-          transactions,
-          total,
-          page,
-          limit,
-          pages: Math.ceil(total / limit)
-        }
-      });
-    }).catch(error => {
-      console.error('[API] Ошибка при получении списка транзакций:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Внутренняя ошибка сервера'
-      });
+    res.json({
+      data: transactions,
+      page,
+      limit,
+      total: transactions.length
     });
   } catch (error) {
-    console.error('[API] Ошибка при получении списка транзакций:', error);
     res.status(500).json({
-      success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to get transactions',
+      message: (error as Error).message
     });
   }
 });
 
 // Получение стоимости звезд в TON и USD
-router.get('/stars/price', function(req: Request, res: Response) {
+router.get('/stars/price', function(req: express.Request, res: express.Response) {
   try {
     // Получаем количество звезд из запроса
     const starsAmount = parseInt(req.query.amount as string);

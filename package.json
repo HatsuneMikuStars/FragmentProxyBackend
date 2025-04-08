@@ -10,8 +10,8 @@
     "watch": "tsc -w",
     "start:api": "yarn build && node dist/server.js",
     "dev:api": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "migration:run": "ts-node scripts/run-migration.ts",
-    "lint": "eslint src/ --ext .ts"
+    "lint": "eslint src/ --ext .ts",
+    "generate:api": "ts-node scripts/generate-api-client.ts"
   },
   "dependencies": {
     "@ton/core": "^0.60.1",
@@ -29,8 +29,6 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "helmet": "^8.1.0",
-    "reflect-metadata": "^0.2.2",
-    "sqlite3": "^5.1.7",
     "ton": "^13.9.0",
     "ton-crypto": "^3.2.0",
     "tonweb": "^0.0.66",
@@ -38,7 +36,6 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "tweetnacl": "^1.0.3",
-    "typeorm": "^0.3.21",
     "typescript": "^5.8.2"
   },
   "devDependencies": {
@@ -48,6 +45,7 @@
     "@typescript-eslint/eslint-plugin": "^8.29.0",
     "@typescript-eslint/parser": "^8.29.0",
     "eslint": "^9.24.0",
+    "swagger-typescript-api": "^13.0.28",
     "typescript-eslint": "^8.29.0"
   }
 }
