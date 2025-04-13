@@ -14,7 +14,7 @@ const router = express.Router();
 
 // Создаем экземпляр API клиента
 const apiClient = new Api({
-  baseURL: 'http://localhost:5238',
+  baseURL: 'http://109.69.62.169:5000',
   headers: {
     'Content-Type': 'application/json'
   }

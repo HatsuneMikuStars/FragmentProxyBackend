@@ -6,7 +6,7 @@ const generate = async () => {
     await generateApi({
       name: 'ApiClient.ts',
       output: path.resolve(process.cwd(), './src/apiClient'),
-      url: 'http://localhost:5238/swagger/v1/swagger.json',
+      url: 'http://109.69.62.169:5000/swagger/v1/swagger.json',
       httpClientType: 'axios',
       generateClient: true,
       generateRouteTypes: true,
