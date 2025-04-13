@@ -7,8 +7,7 @@ import { TonWalletService } from './wallet/TonWalletService';
 import { FragmentStarsPurchaseService } from './services/fragmentStarsPurchaseService';
 import { TonTransactionMonitor } from './services/tonTransactionMonitor';
 import { FragmentApiClient } from './apiClient/fragmentApiClient';
-import { ensureDatabaseReady, AppDataSource } from './database';
-import { TransactionRepository } from './database/repositories/transaction.repository';
+import { Api } from './apiClient/Api';
 import path from 'path';
 
 /**
@@ -41,7 +40,7 @@ app.use('/api', apiRoutes);
 let tonWalletService: TonWalletService;
 let starsPurchaseService: FragmentStarsPurchaseService;
 let transactionMonitor: TonTransactionMonitor;
-let transactionRepository: TransactionRepository;
+let apiClient: Api;
 let isMonitoringRunning = false; // Flag to track monitoring status
 
 // Root route handler
@@ -71,11 +70,13 @@ async function startServer() {
   try {
     console.log('[Server] Starting server and initializing services...');
     
-    // Database initialization
-    await ensureDatabaseReady();
-    
-    // Create transaction repository
-    transactionRepository = new TransactionRepository(AppDataSource);
+    // Initialize API client
+    apiClient = new Api({
+      baseURL: 'http://109.69.62.169:5000',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
     
     // Initialize TON wallet service
     tonWalletService = new TonWalletService();
@@ -101,7 +102,6 @@ async function startServer() {
     console.log(`[Server] Wallet balance: ${Number(balance) / 1_000_000_000} TON`);
     
     // Initialize Fragment API client and save cookies for use in stars purchase service
-    // Note: We're not storing this in a global variable since it's only used during initialization
     const fragmentApiClient = new FragmentApiClient(
       FRAGMENT_CONFIG.COOKIES,
       FRAGMENT_CONFIG.BASE_URL
@@ -113,11 +113,11 @@ async function startServer() {
       tonWalletService
     );
     
-    // Initialize transaction monitor with repository
+    // Initialize transaction monitor with API client
     transactionMonitor = new TonTransactionMonitor(
       tonWalletService,
       starsPurchaseService,
-      transactionRepository
+      apiClient
     );
     
     // Start monitor if automatic start is configured
@@ -141,15 +141,14 @@ async function startServer() {
   }
 }
 
-// Handle termination signals for proper database closure
+// Handle termination signals
 process.on('SIGINT', async () => {
   try {
-    console.log('\n[Server] Termination signal received, closing connections...');
+    console.log('\n[Server] Termination signal received, stopping services...');
     if (transactionMonitor) {
       transactionMonitor.stop();
     }
-    await AppDataSource.destroy();
-    console.log('[Server] All connections closed, shutting down');
+    console.log('[Server] All services stopped, shutting down');
     process.exit(0);
   } catch (error) {
     console.error('[Server] Error during shutdown:', error);

@@ -430,6 +430,8 @@ export class TonWalletService implements IWalletService {
       const type = params.type;
       // Получаем timestamp начала фильтрации
       const startTimestamp = params.startTimestamp;
+      // Фильтрация подозрительных транзакций
+      const filterSuspicious = params.filterSuspicious || false;
       
       // Получаем транзакции с архивного сервера, если нужно
       const transactions = await this.client.getTransactions(address, {
@@ -451,6 +453,11 @@ export class TonWalletService implements IWalletService {
       // Фильтрация по времени
       if (startTimestamp) {
         result = result.filter(tx => tx.timestamp >= startTimestamp);
+      }
+      
+      // Фильтрация подозрительных транзакций, если требуется
+      if (filterSuspicious) {
+        result = result.filter(tx => !this.isSuspiciousTransaction(tx));
       }
       
       return result;
@@ -617,5 +624,70 @@ export class TonWalletService implements IWalletService {
     };
     
     return walletTx;
+  }
+
+  /**
+   * Проверяет, является ли транзакция подозрительной (спамом)
+   * @param transaction Транзакция для проверки
+   * @returns true если транзакция подозрительная, false если нет
+   */
+  isSuspiciousTransaction(transaction: WalletTransaction): boolean {
+    // 1. Проверка на транзакции с нулевыми или очень маленькими суммами (распространенный спам-паттерн)
+    const minSuspiciousAmount = BigInt(10000000); // 0.01 TON в нано-единицах
+    const isSmallAmount = transaction.amount <= minSuspiciousAmount;
+    
+    // 2. Проверка на отсутствие комментария
+    const hasNoComment = !transaction.comment || transaction.comment.trim() === '';
+    
+    // Проверяем комментарии на наличие @
+    const atSymbolPattern = /^@/;
+    const isAtTagComment = transaction.comment && atSymbolPattern.test(transaction.comment);
+    
+    // Другие подозрительные паттерны
+    const otherSuspiciousPatterns = [
+      /https?:\/\//i,                  // Любые URL
+      /t\.me\//i,                      // Telegram ссылки
+      /airdrop|free|giveaway|claim/i,  // Ключевые слова, связанные с мошенничеством
+      /received \+\d+/i,               // Ложные сообщения о получении средств
+      /\bwin\b|\bprize\b|\breward\b/i, // Обещания выигрыша
+      /wallet connect|connect wallet/i // Попытки заставить подключить кошелек
+    ];
+    
+    const hasOtherSuspiciousPattern = transaction.comment && 
+      otherSuspiciousPatterns.some(pattern => pattern.test(transaction.comment!));
+    
+    // 3. Проверка на известные паттерны "bounce" транзакций (переводы туда-обратно)
+    // Для полной проверки нужно также анализировать историю транзакций
+    const isBouncePattern = transaction.additionalData && 
+      transaction.additionalData['bounce'] === true;
+  
+    // Транзакция считается подозрительной, если:
+    // 1. Комментарий начинается с '@' (независимо от суммы), или
+    // 2. Маленькая сумма и другой подозрительный комментарий, или
+    // 3. Это bounce-транзакция
+    // 4. Отсутствует комментарий
+    return isAtTagComment || (isSmallAmount && hasOtherSuspiciousPattern) || isBouncePattern === true || hasNoComment;
+  }
+
+  /**
+   * Получает список транзакций и фильтрует подозрительные
+   * @param params Параметры для получения транзакций
+   * @param filterSuspicious Фильтровать ли подозрительные транзакции (по умолчанию false)
+   * @returns Список транзакций (может быть отфильтрован)
+   */
+  async getTransactionsWithSuspiciousCheck(
+    params: GetTransactionsParams,
+    filterSuspicious: boolean = false
+  ): Promise<{transactions: WalletTransaction[], suspiciousTransactions: WalletTransaction[]}> {
+    const allTransactions = await this.getTransactions(params);
+    
+    // Проверяем каждую транзакцию на подозрительность
+    const suspiciousTransactions = allTransactions.filter(tx => this.isSuspiciousTransaction(tx));
+    
+    // Возвращаем либо все транзакции, либо только не подозрительные
+    return {
+      transactions: filterSuspicious ? allTransactions.filter(tx => !this.isSuspiciousTransaction(tx)) : allTransactions,
+      suspiciousTransactions
+    };
   }
 } 

@@ -155,6 +155,13 @@ export interface GetTransactionsParams {
    * Возвращаются только транзакции с timestamp >= startTimestamp
    */
   startTimestamp?: number;
+  
+  /**
+   * Фильтрация подозрительных (спам) транзакций
+   * Если true, подозрительные транзакции будут исключены из результата
+   * (по умолчанию false)
+   */
+  filterSuspicious?: boolean;
 }
 
 /**

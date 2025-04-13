@@ -16,7 +16,8 @@ async function initializeWallet() {
     const transactions = await tonWalletService.getTransactions({
       limit: 20,
       archival: true,
-      type: TransactionType.INCOMING
+      type: TransactionType.INCOMING,
+      filterSuspicious: true,
     });
 
     console.log(transactions);
